@@ -4,3 +4,7 @@ secret.key
 data/
 __pycache__/
 venv/
+
+# Notes and tools for agents working on this project (local only).
+.agent/
+CLAUDE.local.md
