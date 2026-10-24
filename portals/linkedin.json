@@ -4,9 +4,16 @@
   "country": "",
   "site": "https://www.linkedin.com/jobs/",
   "import": {
-    "hosts": ["linkedin.com"],
+    "hosts": [
+      "linkedin.com"
+    ],
     "offer": "/jobs/view/\\d+",
     "key": "(?:/jobs/view/(?:[^/?#]*-)?|[?&]currentJobId=)(\\d+)",
-    "url": "https://www.linkedin.com/jobs/view/{key}/"
+    "url": "https://www.linkedin.com/jobs/view/{key}/",
+    "link": "/jobs/view/(?:[^/?#]*-)?(\\d+)|[?&]currentJobId=(\\d+)",
+    "ids": [
+      "data-occludable-job-id",
+      "data-job-id"
+    ]
   }
 }

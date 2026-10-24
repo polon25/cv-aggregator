@@ -4,8 +4,11 @@
   "country": "PL",
   "site": "https://www.pracuj.pl",
   "import": {
-    "hosts": ["pracuj.pl"],
+    "hosts": [
+      "pracuj.pl"
+    ],
     "offer": ",oferta,\\d+",
-    "key": ",oferta,(\\d+)"
+    "key": ",oferta,(\\d+)",
+    "link": ",oferta,(\\d+)"
   }
 }

@@ -242,9 +242,10 @@ def _offers_json(conn, user):
         "status": offers.status(user["id"]),
         "offers_at": row["offers_at"], "wanted": bool(row["offers_wanted"]),
         "interval": config.OFFERS_INTERVAL,
-        "importers": [{"id": k, "name": portals.name(k),
-                       "offer": portals.PORTALS[k]["import"].get("offer")}
-                      for k in portals.imported()],
+        "importers": [dict({k: v for k, v in portals.PORTALS[p]["import"]
+                            .items() if k in ("link", "ids", "url")},
+                           id=p, name=portals.name(p))
+                      for p in portals.imported()],
         "daily": {"limit": db.daily_reviews(conn, user["id"]),
                   "used": db.reviews_since(conn, user["id"],
                                            offers.day_start(row)),

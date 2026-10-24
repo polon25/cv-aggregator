@@ -14,8 +14,12 @@ may add portals or replace shipped ones by their id):
      lists come as JSON (an API, or JSON in the page); or "import" only,
      for portals the app can't read, whose pages the user sends from
      their browser (importer.py): {"hosts": its domains, "offer": a regex
-     an offer's address matches, "key": one whose group is its id, "url":
-     an offer's address from {key}, if it should be made so}}
+     an offer's own page's address matches, "key": one whose group is its
+     id, "url": an offer's address from {key}, if it should be made so,
+     and for the bookmarklet (web/importer.js): "link": a regex a link to
+     an offer matches, its first non-empty group the offer's id, "ids":
+     attributes that hold an offer's id (tiles not drawn yet have only
+     these)}}
 
 A described portal:
 

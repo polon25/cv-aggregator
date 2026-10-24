@@ -5,19 +5,68 @@
 // offers read from it as they're rated. Uses app.js' helpers and
 // offers.js' OffersView.
 
-// The bookmarklet's code, run on the portal's page: it takes what the
-// browser shows (the text, JSON-LD JobPostings, and the tile around each
-// link to an offer, by the portals' "offer" patterns), packs it (gzip,
-// base64url) and opens the app with it in the address' fragment, which
-// never reaches a server but the app's own page. It mustn't use anything
-// outside itself: it's turned into a javascript: address.
-function sendPage(app, patterns) {
-  var tests = patterns.map(function (p) { return new RegExp(p); });
-  var isOffer = function (href) { return tests.some(function (t) { return t.test(href); }); };
-  var plain = function (href) { return href.replace(/[?#].*$/, ""); };
+// The bookmarklet's code, run on the portal's page. It mustn't use anything
+// outside itself: it's turned into a javascript: address. `specs`: the
+// portals' {link: a regex an offer's link matches, its first non-empty
+// group the offer's id; ids: attributes holding an offer's id (tiles not
+// drawn yet have nothing else); url: an offer's address from {key}}.
+//
+// It opens the app's tab at once (a click allows that, a later moment
+// not), scrolls the list the offers are in from top to bottom, so that a
+// portal drawing tiles as they come into view (LinkedIn) draws them all,
+// and back; then takes what the browser shows – the text, JSON-LD
+// JobPostings, and the tile around each offer: the largest element around
+// its link with no other offer in it, or the element carrying its id –
+// packs it (gzip, base64url) and sends the tab to the app with it in the
+// address' fragment, which never reaches a server but the app's own page.
+async function sendPage(app, specs) {
+  var tab = window.open("", "_blank");
+  if (!tab) return alert("Przeglądarka zablokowała nowe okno: zezwól tej stronie na wyskakujące okna.");
+  try { tab.document.title = "CV Aggregator"; tab.document.body.textContent = "Zbieram oferty ze strony…"; } catch (e) { /* elsewhere */ }
+  var sleep = function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); };
   var text = function (el, n) {
     return (el && el.innerText || "").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim().slice(0, n);
   };
+  var tests = specs.map(function (s) { return new RegExp(s.link); });
+  var attrs = [].concat.apply([], specs.map(function (s) { return s.ids || []; }));
+  // an offer's {key, url} for a link, or null
+  var offerOf = function (href) {
+    for (var i = 0; i < tests.length; i++) {
+      var m = tests[i].exec(href);
+      if (m) {
+        var id = m.slice(1).filter(Boolean)[0] || href.replace(/[?#].*$/, "");
+        return { key: i + ":" + id, url: specs[i].url && /^\d+$/.test(id) ? specs[i].url.replace("{key}", id) : href };
+      }
+    }
+    return null;
+  };
+  var idOf = function (el) {
+    for (var i = 0; i < attrs.length; i++) {
+      var m = /(\d{5,})\D*$/.exec(el.getAttribute(attrs[i]) || "");
+      if (m) {
+        var spec = specs.filter(function (s) { return (s.ids || []).indexOf(attrs[i]) >= 0; })[0];
+        return { key: specs.indexOf(spec) + ":" + m[1], url: (spec.url || "").replace("{key}", m[1]) };
+      }
+    }
+    return null;
+  };
+  var marked = function () {
+    return attrs.length ? [].slice.call(document.querySelectorAll(attrs.map(function (a) { return "[" + a + "]"; }).join(","))) : [];
+  };
+  var offerLinks = function () {
+    return [].slice.call(document.querySelectorAll("a[href]")).filter(function (a) { return offerOf(a.href); });
+  };
+  // the list: the scrolled element around the first tile
+  var first = marked()[0] || offerLinks()[0], box = first;
+  while (box && box !== document.body && !(box.scrollHeight > box.clientHeight + 20 &&
+         /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+  if (box && box !== document.body) {
+    var back = box.scrollTop;
+    for (var y = 0; y < box.scrollHeight; y += box.clientHeight * 0.7) { box.scrollTop = y; await sleep(250); }
+    box.scrollTop = box.scrollHeight;
+    await sleep(400);
+    box.scrollTop = back;
+  }
   var ld = [];
   document.querySelectorAll('script[type="application/ld+json"]').forEach(function (s) {
     try {
@@ -27,41 +76,43 @@ function sendPage(app, patterns) {
     } catch (e) { /* not JSON */ }
   });
   var seen = {}, cards = [];
-  [].slice.call(document.querySelectorAll("a[href]")).forEach(function (a) {
-    var key = plain(a.href);
-    if (!isOffer(a.href) || seen[key]) return;
-    seen[key] = 1;
-    // the tile: the largest element around the link with no other offer
+  offerLinks().forEach(function (a) {
+    var offer = offerOf(a.href);
+    if (seen[offer.key]) return;
+    seen[offer.key] = 1;
     var el = a;
     while (el.parentElement && el.parentElement !== document.body &&
            ![].slice.call(el.parentElement.querySelectorAll("a[href]")).some(function (b) {
-             return isOffer(b.href) && plain(b.href) !== key;
+             var other = offerOf(b.href);
+             return other && other.key !== offer.key;
            })) {
       el = el.parentElement;
     }
-    cards.push({ url: a.href, text: text(el, 600) });
+    cards.push({ url: offer.url, text: text(el, 600) });
+  });
+  marked().forEach(function (el) {
+    var offer = idOf(el);
+    if (!offer || !offer.url || seen[offer.key]) return;
+    seen[offer.key] = 1;
+    cards.push({ url: offer.url, text: text(el, 600) });
   });
   var data = JSON.stringify({
     url: location.href, title: document.title, ld: ld.slice(0, 1), cards: cards.slice(0, 120),
     text: text(document.querySelector("main") || document.body, 20000),
   });
-  var tab = window.open("", "_blank");
-  if (!tab) return alert("Przeglądarka zablokowała nowe okno: zezwól tej stronie na wyskakujące okna.");
   var go = function (hash) { tab.location.href = app + "#/import?" + hash; };
   if (!window.CompressionStream) return go("j=" + encodeURIComponent(data));
-  new Response(new Blob([data]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer()
-    .then(function (buf) {
-      var bytes = new Uint8Array(buf), bin = "";
-      for (var i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-      go("z=" + btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""));
-    });
+  var buf = await new Response(new Blob([data]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+  var bytes = new Uint8Array(buf), bin = "";
+  for (var i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  go("z=" + btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""));
 }
 
 function bookmarkletHref(importers) {
   const app = location.origin + location.pathname;
-  const patterns = importers.map((i) => i.offer).filter(Boolean);
+  const specs = importers.filter((i) => i.link).map((i) => ({ link: i.link, ids: i.ids || [], url: i.url || "" }));
   return "javascript:" + encodeURIComponent("(" + sendPage.toString() + ")(" + JSON.stringify(app) + "," +
-    JSON.stringify(patterns) + ")");
+    JSON.stringify(specs) + ")");
 }
 
 // What the bookmarklet packed, from the fragment ("z=": gzip, base64url;

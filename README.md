@@ -287,10 +287,13 @@ instead (see below); their files in portals/ have only `import`.
 
 The offers page gives a bookmarklet, "→ CV Aggregator", to drag to the
 bookmarks bar ([web/importer.js](web/importer.js)). Clicked on a page, it
+scrolls the list of offers from top to bottom and back, so that a portal
+drawing tiles as they come into view (LinkedIn) draws them all, then
 takes what the browser shows – the page's text, its JSON-LD
-`JobPosting`s, and for each link to an offer (by the `import.offer`
-patterns of portals/) the largest element around it with no other offer,
-its tile – packs it (gzip, base64url) and opens the app with it in the
+`JobPosting`s, and for each offer (a link matching a portal's
+`import.link`, or an element with one of its `import.ids` attributes)
+its tile: the largest element around the link with no other offer, or
+the element with the id – packs it (gzip, base64url) and opens the app with it in the
 address' fragment, which reaches no server but the app's own page; that
 page posts it to `/api/offers/import` and shows what comes of it.
 [importer.py](importer.py), on the offers thread, then:
