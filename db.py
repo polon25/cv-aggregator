@@ -984,3 +984,10 @@ def want_reviews(conn, user_id, offer_ids, rated_before=None):
     extra = () if rated_before is None else (rated_before,)
     with conn:
         conn.executemany(sql, [(user_id, i) + extra for i in offer_ids])
+
+
+def seen_offers(conn, ids):
+    """The offers were seen again (on a page sent from the browser)."""
+    with conn:
+        conn.executemany("UPDATE offers SET last_seen = ? WHERE id = ?",
+                         [(time.time(), i) for i in ids])

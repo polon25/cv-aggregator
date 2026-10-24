@@ -8,7 +8,8 @@ JobPostings), cards ([{url, text}]: the tiles around links to offers, by
 the portal's "offer" pattern)}:
 
 - a results page (tiles): a model reads the tiles' offers
-  (agents.read_cards); they're sifted by the user's wishes like any
+  (agents.read_cards; offers kept already, from an earlier page, aren't
+  read again); they're sifted by the user's wishes like any
   others (offers.judge), the ones that don't do are left out, and the
   RATE_LIST most promising are rated at once (from their tiles alone);
 - an offer's page (its address is an offer's, by the portal's "offer"
@@ -87,6 +88,10 @@ def process(conn, item):
     tiles = tiles[:MAX_CARDS]
     if not tiles and not single:
         single = key  # a page of a site no portal describes: one offer
+    # tiles of offers kept already aren't read again
+    known_ids = db.offer_ids(conn, [(t[0], t[1]) for t in tiles])
+    known_tiles = [t for t in tiles if (t[0], t[1]) in known_ids]
+    tiles = [t for t in tiles if (t[0], t[1]) not in known_ids]
     found = []
     try:
         if tiles:
@@ -106,10 +111,12 @@ def process(conn, item):
         log.warning("Import %d not read: %s", item["id"], e)
         raise ImportFailed(worker.FAILED if account["use_free"]
                            else worker.PAID_FAILED)
-    if not found:
+    if not found and not known_tiles:
         raise ImportFailed("Nie znalazłam na tej stronie ofert pracy.")
     db.save_offers(conn, found)
+    db.seen_offers(conn, list(known_ids.values()))
     ids = db.offer_ids(conn, [(o["portal"], o["key"]) for o in found])
+    ids.update(known_ids)
     rows = db.offers_by_id(conn, list(ids.values()))
     judged, row = offers.judge(conn, item["user_id"], rows)
     kept, out = [], 0
@@ -134,12 +141,13 @@ def process(conn, item):
         (k for k in kept if not k[4]), key=lambda k: -k[1])][:RATE_LIST]
     db.want_reviews(conn, item["user_id"], best, row["wishes_at"] or 0)
     rate += best
-    log.info("Import %d (%s): %d tiles, %d offers read, %d kept, %d rated",
-             item["id"], portal, len(tiles), len(found), len(kept),
-             len(rate))
-    return {"offers": [o["id"] for o, *_ in kept], "tiles": len(tiles),
-            "read": len(found), "kept": len(kept), "out": out,
-            "single": bool(single)}
+    log.info("Import %d (%s): %d tiles (%d known), %d offers read, %d kept, "
+             "%d rated", item["id"], portal, len(tiles) + len(known_tiles),
+             len(known_tiles), len(found), len(kept), len(rate))
+    return {"offers": [o["id"] for o, *_ in kept],
+            "tiles": len(tiles) + len(known_tiles),
+            "read": len(found) + len(known_tiles), "kept": len(kept),
+            "out": out, "single": bool(single)}
 
 
 class ImportFailed(Exception):

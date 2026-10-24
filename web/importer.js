@@ -14,7 +14,9 @@
 // It opens the app's tab at once (a click allows that, a later moment
 // not), scrolls the list the offers are in from top to bottom, so that a
 // portal drawing tiles as they come into view (LinkedIn) draws them all,
-// and back; then takes what the browser shows – the text, JSON-LD
+// and back – unless this tab sent this list already (the same address
+// but the open offer's currentJobId): then the list's tiles aren't sent,
+// just the page with the open offer – then takes what the browser shows – the text, JSON-LD
 // JobPostings, and the tile around each offer: the largest element around
 // its link with no other offer in it, or the element carrying its id –
 // packs it (gzip, base64url) and sends the tab to the app with it in the
@@ -56,8 +58,13 @@ async function sendPage(app, specs) {
   var offerLinks = function () {
     return [].slice.call(document.querySelectorAll("a[href]")).filter(function (a) { return offerOf(a.href); });
   };
+  // a list sent from this tab already (LinkedIn keeps its list while
+  // another offer is picked) isn't sent again: the open offer is
+  var list = location.href.replace(/([?&])currentJobId=\d+&?/, "$1").replace(/[?&#]+$/, "");
+  var again = window.__cvAggregatorList === list;
+  window.__cvAggregatorList = list;
   // the list: the scrolled element around the first tile
-  var first = marked()[0] || offerLinks()[0], box = first;
+  var first = !again && (marked()[0] || offerLinks()[0]), box = first;
   while (box && box !== document.body && !(box.scrollHeight > box.clientHeight + 20 &&
          /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
   if (box && box !== document.body) {
@@ -76,7 +83,7 @@ async function sendPage(app, specs) {
     } catch (e) { /* not JSON */ }
   });
   var seen = {}, cards = [];
-  offerLinks().forEach(function (a) {
+  (again ? [] : offerLinks()).forEach(function (a) {
     var offer = offerOf(a.href);
     if (seen[offer.key]) return;
     seen[offer.key] = 1;
@@ -90,7 +97,7 @@ async function sendPage(app, specs) {
     }
     cards.push({ url: offer.url, text: text(el, 600) });
   });
-  marked().forEach(function (el) {
+  (again ? [] : marked()).forEach(function (el) {
     var offer = idOf(el);
     if (!offer || !offer.url || seen[offer.key]) return;
     seen[offer.key] = 1;
