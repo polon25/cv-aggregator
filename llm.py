@@ -1,9 +1,9 @@
 """Chat completion requests (OpenRouter by default) for JSON answers, with
 retries: ask_json() is how the agents (agents.py) talk to their models.
 
-Requests go with an "account": {key, paid, free, use_paid}, the user's own
-key and ladder of models, paid ones and free ones, or the server's key
-when the user gave none (db.account). check_key() asks OpenRouter whether
+Requests go with an "account": {key, paid, free, use_paid, use_free}, the
+user's own key and ladder of models, paid ones and free ones, and whether
+each may be used (db.account). check_key() asks OpenRouter whether
 a key is good, funds() how much is left on it for paid models,
 catalogue() which models there are and what they cost.
 

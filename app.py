@@ -8,10 +8,10 @@ and serves the web page (web_server.py).
                                            asked for, or read from stdin),
                                            also with ALLOW_REGISTRATION off
     python3 app.py --set-password USER     set a user's password (same)
-    python3 app.py --set-key USER          give a user their own OpenRouter
-                                           key (asked for, or read from
-                                           stdin; empty: they go back to
-                                           the server's)
+    python3 app.py --set-key USER          give a user an OpenRouter key
+                                           (asked for, or read from stdin;
+                                           left empty: OPENROUTER_API_KEY
+                                           of .env)
 """
 
 import argparse
@@ -68,28 +68,28 @@ def set_password(username):
 def set_key(username):
     if sys.stdin.isatty():
         key = getpass.getpass("Klucz API OpenRoutera dla %s (pusty: klucz "
-                              "serwera): " % username)
+                              "z .env): " % username)
     else:
         key = sys.stdin.readline()
-    key = "".join(key.split())
+    key = "".join(key.split()) or config.OPENROUTER_API_KEY
+    if not key:
+        sys.exit("Nie podano klucza, a w .env nie ma OPENROUTER_API_KEY.")
     conn = db.connect()
     try:
         user = db.find_user(conn, username)
         if not user:
             sys.exit("Nie ma użytkownika %s." % username)
-        if key:
-            try:
-                llm.check_key(key)
-            except llm.BadKey:
-                sys.exit("OpenRouter nie rozpoznaje tego klucza.")
-            except llm.LLMError as e:
-                sys.exit("Nie udało się sprawdzić klucza: %s" % e)
-        db.set_api_key(conn, user["id"], key or None)
+        try:
+            llm.check_key(key)
+        except llm.BadKey:
+            sys.exit("OpenRouter nie rozpoznaje tego klucza.")
+        except llm.LLMError as e:
+            sys.exit("Nie udało się sprawdzić klucza: %s" % e)
+        db.set_api_key(conn, user["id"], key)
     finally:
         conn.close()
-    print("Użytkownik %s ma teraz %s." % (
-        user["username"], "klucz kończący się na …%s" % key[-4:] if key
-        else "klucz serwera"))
+    print("Użytkownik %s ma teraz klucz kończący się na …%s."
+          % (user["username"], key[-4:]))
 
 
 def main():
@@ -113,8 +113,6 @@ def main():
         return set_password(args.set_password)
     if args.set_key:
         return set_key(args.set_key)
-    if not config.OPENROUTER_API_KEY:
-        log.info("No OPENROUTER_API_KEY: users need keys of their own")
     worker.start(max(1, config.WORKERS))
     web_server.serve()
 

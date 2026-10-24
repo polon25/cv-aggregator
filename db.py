@@ -2,8 +2,8 @@
 (config.DB_FILE); the CVs' files lie in config.CV_DIR.
 
     users       username and password hash (PBKDF2-SHA256); the user's
-                OpenRouter key (sealed, see vault.py; NULL: the server's
-                key), own lists of paid and free models, and whether
+                OpenRouter key (sealed, see vault.py; NULL: none given),
+                own lists of paid and free models, and whether
                 each of the two may be used
     logins      login sessions, by the SHA-256 of their cookie token
     cvs         a user's uploaded CV: file name, kind, its text, and what a
@@ -220,8 +220,7 @@ def set_use(conn, user_id, which, on):
 
 
 def account(conn, user_id):
-    """What a user's requests go with: {key (their own, else the
-    server's; None: neither), own_key (whether it's their own), paid, free
+    """What a user's requests go with: {key (None: none given), paid, free
     (lists of models), custom (the lists are the user's own, not the
     defaults), use_paid, use_free (whether the paid ones, the free ones
     may be used; see llm.ladder)}."""
@@ -229,7 +228,6 @@ def account(conn, user_id):
                        "use_free FROM users WHERE id = ?",
                        (user_id,)).fetchone() or {}
     custom = row.get("paid_models") is not None
-    own = vault.unseal(row.get("api_key"))
     paid = json.loads(row["paid_models"]) if custom \
         else list(config.OPENROUTER_PAID_MODELS)
     wanted = config.OPENROUTER_PAID_DEFAULT if row.get("use_paid") is None \
@@ -237,8 +235,7 @@ def account(conn, user_id):
     free = config.OPENROUTER_FREE_DEFAULT if row.get("use_free") is None \
         else bool(row["use_free"])
     return {
-        "key": own or config.OPENROUTER_API_KEY or None,
-        "own_key": bool(own),
+        "key": vault.unseal(row.get("api_key")),
         "paid": paid,
         "free": json.loads(row["free_models"] or "[]") if custom
         else list(config.OPENROUTER_MODELS),

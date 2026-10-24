@@ -8,8 +8,8 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/login            {username, password}
     POST /api/logout
     GET  /api/me               the user, whether they can have models read
-                               CVs (a key of their own or the server's, and
-                               some models allowed) (401 if logged out)
+                               CVs (a key, and some models allowed) (401 if
+                               logged out)
     GET  /api/settings         the user's OpenRouter key (whether there is
                                one and its last characters, never the key),
                                its funds, the user's lists of paid and
@@ -82,10 +82,9 @@ MODEL_NAME = re.compile(r"~?[\w.\-]+/[\w.\-:]+")
 def _settings_json(conn, user):
     """The user's key (never the key itself) and ladder of models."""
     account = db.account(conn, user["id"])
-    own = account["key"] if account["own_key"] else None
+    key = account["key"]
     return {
-        "key": {"set": bool(own), "hint": own[-4:] if own else ""},
-        "shared": bool(config.OPENROUTER_API_KEY),
+        "key": {"set": bool(key), "hint": key[-4:] if key else ""},
         "funds": llm.funds_status(account["key"]) if account["key"]
         else None,
         "paid": account["paid"], "free": account["free"],

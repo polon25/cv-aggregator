@@ -25,8 +25,7 @@ IDLE_SECONDS = 30
 _wake = threading.Event()
 _claim = threading.Lock()
 
-NO_KEY = ("Brak klucza API OpenRoutera: podaj swój w Ustawieniach (serwer "
-          "nie ma wspólnego).")
+NO_KEY = "Brak klucza API OpenRoutera: podaj swój w Ustawieniach."
 BAD_KEY = "OpenRouter nie przyjął klucza API – sprawdź go w Ustawieniach."
 FAILED = ("Żaden model nie dał użytecznej odpowiedzi (przeciążone albo "
           "brak środków). Spróbuj ponownie za chwilę.")

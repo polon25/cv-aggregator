@@ -16,8 +16,9 @@ and keywords to look for.
 Models think; the program does whatever it can do itself (see "How a
 profile is made"). Only the standard library is needed, plus `pdftotext`
 (poppler-utils) for PDFs and, for DOC and RTF only, LibreOffice. Runs on
-Python 3.8+. The models are [OpenRouter](https://openrouter.ai)'s (the
-server's key, or the user's own), or any other OpenAI-compatible API's.
+Python 3.8+. The models are [OpenRouter](https://openrouter.ai)'s, with
+every user's own key (given in the page's settings), or any other
+OpenAI-compatible API's.
 Each user chooses whether paid models may be used (on until they choose)
 and whether free ones may (off until they choose: their providers may keep
 what they're sent, the CVs, so with them off no CV ever goes to a free
@@ -27,7 +28,7 @@ model, even when the paid ones fail).
 
 ```bash
 sudo apt install poppler-utils     # pdftotext
-cp .env.example .env               # and put the OpenRouter key in it
+cp .env.example .env               # all of it is optional
 python3 app.py                     # http://<host>:8075
 ```
 
@@ -35,7 +36,7 @@ Settings (`.env`, see [.env.example](.env.example)):
 
 | Setting | Default | |
 |---|---|---|
-| `OPENROUTER_API_KEY` | | the key used for users who haven't given their own in the page's settings; empty: everyone must give one |
+| `OPENROUTER_API_KEY` | | not used by requests (every user gives their own key in the page's settings); `app.py --set-key USER` hands this one to a user |
 | `OPENROUTER_MODEL` | `openrouter/free` | the last model on the ladder of everyone using free models, which users can't remove; `openrouter/free` picks some free one per request |
 | `OPENROUTER_MODELS` | | the default list of free models for users who haven't set their own, comma-separated, one attempt each before `OPENROUTER_MODEL`; a model that's down fails fast and one that's rate-limited is asked once more after a few seconds, then the next one is tried; a model still rate-limited then, or one that didn't answer in time, is left out for three minutes, and one that refused (a paid model when the funds have run out, a model that's gone) for an hour |
 | `OPENROUTER_PAID_MODELS` | | the default list of paid models, tried before the free ones for users who want them; `~…` is OpenRouter's alias for the latest model of a family (e.g. `~anthropic/claude-haiku-latest`); Anthropic's models get the system prompt marked for caching |
@@ -76,8 +77,8 @@ Accounts and keys from the command line:
 ```bash
 python3 app.py --add-user USER        # also with ALLOW_REGISTRATION=0
 python3 app.py --set-password USER    # asks for it (or reads it from stdin)
-python3 app.py --set-key USER         # the user's own OpenRouter key; empty:
-                                      # back to the server's
+python3 app.py --set-key USER         # gives USER an OpenRouter key: asked for,
+                                      # read from stdin, or .env's when empty
 ```
 
 Logs: `journalctl -u cv-aggregator -f`; every model request is logged with

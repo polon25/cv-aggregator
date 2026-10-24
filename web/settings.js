@@ -1,6 +1,6 @@
 "use strict";
-// The user's settings: their OpenRouter API key (or the server's, when
-// they give none), their ladder of models, paid ones and free ones, in the
+// The user's settings: their OpenRouter API key, which their CVs are read
+// with, their ladder of models, paid ones and free ones, in the
 // order the agents ask them, and whether each of the two may be used: free
 // models' providers may keep what they're sent, so they're off until the
 // user turns them on. Uses the helpers of app.js (el, api) and its `me`.
@@ -104,20 +104,15 @@ async function settingsDialog() {
     const left = funds && funds.left !== null && el("span", { class: funds.low ? "warn" : "" },
       " " + (funds.low ? "⚠ " : "") + "Na płatne modele zostało ok. " + dollars(funds.left) + ".");
     keyState.replaceChildren(settings.key.set
-      ? el("p", { class: "key-state ok" }, "✓ Masz zapisany własny klucz kończący się na …" + settings.key.hint + ".",
+      ? el("p", { class: "key-state ok" }, "✓ Masz zapisany klucz kończący się na …" + settings.key.hint + ".",
           left, " ",
           el("button", {
             class: "link danger", type: "button", onclick: async () => {
-              const then = settings.shared ? "Będzie używany wspólny klucz serwera."
-                : "Bez klucza CV nie będą odczytywane.";
-              if (!confirm("Usunąć klucz? " + then)) return;
+              if (!confirm("Usunąć klucz? Bez klucza CV nie będą odczytywane, dopóki nie podasz nowego.")) return;
               await send("settings/key", { key: "" }, keyError);
             },
           }, "Usuń klucz"))
-      : settings.shared
-        ? el("p", { class: "key-state ok" }, "✓ Korzystasz ze wspólnego klucza serwera.", left)
-        : el("p", { class: "key-state warn" }, "⚠ Nie masz klucza, a serwer nie ma wspólnego: " +
-            "bez klucza CV nie zostaną odczytane."));
+      : el("p", { class: "key-state warn" }, "⚠ Nie masz jeszcze klucza: bez niego CV nie zostaną odczytane."));
     keyInput.placeholder = settings.key.set ? "wklej nowy klucz, żeby zmienić" : "sk-or-v1-…";
   };
 
@@ -164,7 +159,7 @@ async function settingsDialog() {
     if (button) button.disabled = true;
     try {
       settings = await api("POST", path, body);
-      me.has_key = settings.key.set || settings.shared;
+      me.has_key = settings.key.set;
       me.has_models = settings.use_paid || settings.use_free;
       renderAccount();
       renderKey();
@@ -192,9 +187,8 @@ async function settingsDialog() {
     el("h3", { class: "form-section" }, "Klucz API OpenRoutera"),
     el("p", { class: "hint" }, "CV czytają i analizują modele językowe z ",
       el("a", { href: "https://openrouter.ai/keys", target: "_blank", rel: "noopener" }, "OpenRoutera"),
-      ". Możesz podać własny klucz – wtedy płacisz ze swoich środków" +
-      (settings.shared ? "; bez niego używany jest wspólny klucz serwera" : "") +
-      ". Klucz jest przechowywany na serwerze zaszyfrowany i nigdy nie jest pokazywany."),
+      ". Podaj swój klucz: twoje CV są czytane z jego środków. Klucz jest przechowywany na serwerze " +
+      "zaszyfrowany i nigdy nie jest pokazywany. Warto ustawić mu w OpenRouterze limit wydatków."),
     keyState,
     el("form", {
       onsubmit: async (e) => {
@@ -205,7 +199,7 @@ async function settingsDialog() {
         saveKey.textContent = "Sprawdź i zapisz klucz";
       },
     },
-      el("label", { for: "api-key" }, "Własny klucz"),
+      el("label", { for: "api-key" }, "Klucz"),
       el("div", { class: "row" }, keyInput, saveKey),
       keyError),
 

@@ -52,8 +52,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL") or "INFO"
 
 # --- the models reading CVs and describing candidates -------------------
 
-# The key everyone's requests go with unless they give their own in the
-# page's settings (empty: everyone must give one).
+# Every user gives their own key in the page's settings; this one is only
+# what `app.py --set-key USER` hands a user when given none.
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or ""
 # Any OpenAI-compatible chat completions endpoint works.
 OPENROUTER_URL = os.getenv("OPENROUTER_URL") or (
