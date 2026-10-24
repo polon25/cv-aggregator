@@ -277,11 +277,36 @@ code (see [portals.py](portals.py) for every option):
 A file that can't be read, or has neither `parser` nor `search`, is left
 out with an error in the log.
 
-Not searched: pracuj.pl and theprotocol.it answer programs with a
+Not searched: pracuj.pl (and theprotocol.it) answer programs with a
 Cloudflare challenge (HTTP 403), which isn't to be got round; LinkedIn has
 no public job search API (its Job Posting API is for partners only) and
-its terms forbid scraping. Both send job alerts by e-mail, which may be
-read in a later version.
+its terms forbid scraping. Their offers come from the user's browser
+instead (see below); their files in portals/ have only `import`.
+
+### Offers sent from the browser
+
+The offers page gives a bookmarklet, "→ CV Aggregator", to drag to the
+bookmarks bar ([web/importer.js](web/importer.js)). Clicked on a page, it
+takes what the browser shows – the page's text, its JSON-LD
+`JobPosting`s, and for each link to an offer (by the `import.offer`
+patterns of portals/) the largest element around it with no other offer,
+its tile – packs it (gzip, base64url) and opens the app with it in the
+address' fragment, which reaches no server but the app's own page; that
+page posts it to `/api/offers/import` and shows what comes of it.
+[importer.py](importer.py), on the offers thread, then:
+
+- on a results page, has a model read the tiles (`agents.read_cards`);
+  the offers are sifted by the user's wishes like any others – the ones
+  ruled out are left out – and the 20 most promising rated at once, from
+  their tiles alone (the offer says so);
+- on an offer's page (its address is an offer's, or, on a site no
+  portal describes, it has a `JobPosting`) – its "similar offers" left
+  out – or for the offer LinkedIn shows beside its list (`currentJobId`),
+  has a model read the offer with its full text (`agents.read_page`) and
+  rates it at once, whatever it misses.
+
+Neither counts in the day's number of ratings. It works on other sites'
+offer pages too.
 
 ## Data
 
@@ -296,6 +321,7 @@ read in a later version.
 | `offers` | offers found, shared by all users: portal, its id, URL, what the list said (JSON), first and last seen, the full text once fetched |
 | `searches` | when a portal was last searched for a term, how many offers it gave or what went wrong |
 | `places` | a town's coordinates (from Nominatim; none if not found) |
+| `imports` | a page sent from the browser: its address, what it showed (until read), status, what came of it or what went wrong |
 | `matches` | an offer kept for a user: the program's score, the wishes it doesn't meet and their points, the user's mark (`new`, `interested`, `applied`, `rejected`), whether they asked for a rating, the model's score and review (JSON), who wrote it and when |
 
 ### API
@@ -327,6 +353,8 @@ read in a later version.
 | `POST /api/offers/wishes` | `{wishes, goals}`; offers are looked for again |
 | `POST /api/offers/search` | looks for offers now |
 | `POST /api/offers/more` | has the next 10 offers rated (not counted in the day's number) |
+| `POST /api/offers/import` | `{url, title, text, ld, cards}`: a page sent from the browser; returns its `{id}` |
+| `GET /api/offers/import/<id>` | as `GET /api/offers`, with `import` (status, result), its offers only |
 | `POST /api/offers/<id>/status` | `{status}`: `new`, `interested`, `applied`, `rejected` |
 | `POST /api/offers/<id>/review` | has the offer rated now (not counted in the day's number) |
 

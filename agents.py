@@ -2,7 +2,8 @@
 into a structured extraction (candidate.py merges those and does the
 rest), analyze() describes a candidate from their whole profile,
 review_offer() rates a job offer for a candidate (matching.py chooses
-which).
+which), read_cards() and read_page() read offers from pages users send
+from their browser (importer.py).
 
 Both ask for a JSON answer (llm.ask_json) and check it before it's kept.
 Prompts are in Polish: so is what the models write.
@@ -15,6 +16,7 @@ import candidate
 import documents
 import llm
 import matching
+import portals
 
 log = logging.getLogger("agents")
 
@@ -205,7 +207,8 @@ Odpowiedz wyłącznie obiektem JSON, w tej kolejności pól:
 oczekiwań"], "score": 0–100}
 
 Zalet i wad podaj po 2–4, każdą krótko (do jednego zdania), najważniejsze \
-najpierw. Nie powtarzaj tego, co oczywiste z samej oferty.
+najpierw. Nie powtarzaj tego, co oczywiste z samej oferty. Pole "score" \
+jest obowiązkowe: zakończ nim odpowiedź.
 
 Skala: 85–100 świetne dopasowanie, kandydat spełnia prawie wszystkie wymagania \
 i oferta odpowiada temu, czego szuka; 65–84 dobre, z drobnymi brakami; 40–64 \
@@ -245,8 +248,8 @@ def _offer_text(offer, text):
         lines.append("Wymagane umiejętności: %s" % ", ".join(offer["skills"]))
     if offer["nice"]:
         lines.append("Mile widziane: %s" % ", ".join(offer["nice"]))
-    if text:
-        lines += ["", text]
+    lines += ["", text or "(Pełnego opisu nie ma: oceniasz na podstawie skrótu "
+              "ze strony wyników.)"]
     return "\n".join(lines)
 
 
@@ -278,3 +281,122 @@ def review_offer(profile_text, wishes_text, offer, text, account):
     review, _, model = llm.ask_json(messages, "review offer",
                                     _validate_review, account, think=False)
     return review, model
+
+
+OFFER_FIELDS = """"title": "stanowisko", "company": "firma", \
+"cities": ["miejscowości"], "mode": "remote|hybrid|office|", \
+"salary_min": liczba lub null, "salary_max": liczba lub null, \
+"currency": "PLN|EUR|USD|…", "period": "month|hour|day|year", \
+"contracts": ["uop|b2b|other"], "level": "intern|junior|mid|senior|lead|", \
+"skills": ["wymagane technologie i umiejętności"]"""
+
+OFFER_RULES = """Zasady: przepisuj tylko to, co jest na stronie, niczego nie \
+zgaduj (czego nie ma, zostaw puste: "", [], null). "mode": praca zdalna → \
+remote, hybrydowa → hybrid, stacjonarna/w biurze → office. "contracts": \
+umowa o pracę/permanent/full-time employment → uop, B2B/kontrakt → b2b, \
+zlecenie, dzieło, staż, praktyki → other. "level": praktykant/stażysta → \
+intern, junior/młodszy → junior, mid/regular/specjalista → mid, \
+senior/starszy/ekspert → senior, lead/kierownik/manager/head → lead. \
+Wynagrodzenie jako liczby, z "period" tak jak na stronie (np. 120–150 zł/h \
+→ 120, 150, "hour")."""
+
+READ_CARDS = """Dostajesz ponumerowane kafelki ofert pracy ze strony wyników \
+wyszukiwania portalu z ofertami. Dla każdego kafelka przepisz dane oferty. \
+Odpowiedz wyłącznie obiektem JSON, bez wcięć:
+{"offers": [{"i": numer kafelka, %s}]}
+
+%s Kafelek, który nie jest ofertą pracy, pomiń.""" % (OFFER_FIELDS, OFFER_RULES)
+
+READ_PAGE = """Dostajesz tekst strony z jedną ofertą pracy (stronę portalu \
+z ofertami; może zawierać też menu, inne oferty i stopkę). Przepisz dane tej \
+oferty%s. Odpowiedz wyłącznie obiektem JSON, bez wcięć:
+{%s%s}
+
+%s"""
+
+
+def _clean_offer(raw):
+    """What a model read of an offer, as portals.tidy() expects it (bar
+    portal, key and url)."""
+    if not isinstance(raw, dict) or not candidate.clean_text(
+            raw.get("title"), 200):
+        return None
+    def number(value):
+        try:
+            return float(str(value).replace(" ", "").replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+    period = str(raw.get("period") or "month")
+    return {
+        "title": candidate.clean_text(raw.get("title"), 200),
+        "company": candidate.clean_text(raw.get("company"), 200),
+        "cities": candidate.clean_value("list", raw.get("cities"), 80),
+        "mode": raw.get("mode"),
+        "salary_min": portals.monthly(number(raw.get("salary_min")), period),
+        "salary_max": portals.monthly(number(raw.get("salary_max")), period),
+        "currency": candidate.clean_text(raw.get("currency"), 5).upper()
+        or None,
+        "contracts": [c for c in raw.get("contracts") or []
+                      if isinstance(c, str)],
+        "level": raw.get("level"),
+        "skills": candidate.clean_value("list", raw.get("skills"), 60),
+    }
+
+
+def read_cards(cards, account):
+    """Offers from a results page's tiles ([text]): {tile index: offer}."""
+    listing = "\n\n".join("[%d]\n%s" % (n, text)
+                          for n, text in enumerate(cards))
+
+    def validate(answer):
+        found = {}
+        for raw in answer.get("offers") or []:
+            try:
+                index = int(raw.get("i"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            offer = _clean_offer(raw)
+            if offer and 0 <= index < len(cards):
+                found[index] = offer
+        return found
+
+    messages = [{"role": "system", "content": READ_CARDS},
+                {"role": "user", "content": listing}]
+    found, _, model = llm.ask_json(messages, "read offers", validate,
+                                   account, think=False)
+    return found, model
+
+
+def read_page(text, title, posting, selected, account):
+    """One offer from its page's text (and its JSON-LD JobPosting, if it
+    has one, which then gives its text): (offer with "text", who
+    answered). `selected`: the id of the offer shown beside a list (on
+    LinkedIn's search), to read that one."""
+    which = " (tej, która jest otwarta obok listy, o id %s)" % selected \
+        if selected else ""
+    need_text = not (posting and posting.get("description"))
+    shape = ', "description": "pełna treść ogłoszenia: o firmie, obowiązki, ' \
+        'wymagania, oferta – przepisana bez skracania, bez menu i innych ' \
+        'ofert"' if need_text else ""
+    page = "Tytuł strony: %s\n\n" % title
+    if posting:
+        page += "JSON-LD oferty:\n%s\n\n" % json.dumps(
+            {k: v for k, v in posting.items() if k != "description"},
+            ensure_ascii=False)[:4000]
+    page += "<strona>\n%s\n</strona>" % text
+
+    def validate(answer):
+        offer = _clean_offer(answer)
+        if not offer:
+            raise ValueError("no title")
+        offer["text"] = portals.text_of(posting["description"]) \
+            if not need_text else candidate.clean_text(
+                answer.get("description"), 20000, True)
+        return offer
+
+    messages = [{"role": "system", "content": READ_PAGE % (
+        which, OFFER_FIELDS, shape, OFFER_RULES)},
+                {"role": "user", "content": page}]
+    offer, _, model = llm.ask_json(messages, "read offer", validate, account,
+                                   think=False)
+    return offer, model

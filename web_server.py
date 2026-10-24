@@ -48,6 +48,12 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/offers/search    has offers looked for now
     POST /api/offers/more      has the next MORE_REVIEWS offers rated
                                (beyond the day's number)
+    POST /api/offers/import    {url, title, text, ld, cards}: a page sent
+                               from the browser (importer.py); returns its
+                               {id}
+    GET  /api/offers/import/<id>
+                               as /api/offers, with `import` (its status,
+                               what came of it), its offers only
     POST /api/offers/<id>/status
                                {status}: new, interested, applied, rejected
     POST /api/offers/<id>/review
@@ -75,15 +81,19 @@ import candidate
 import config
 import db
 import documents
+import importer
 import llm
 import matching
 import offers
+import portals
 import worker
 
 log = logging.getLogger("web")
 
 COOKIE = "login"
 MAX_BODY = 64 * 1024
+# A page sent from the browser (importer.py) may be this large.
+MAX_PAGE = 2 * 1024 * 1024
 
 
 class HttpError(Exception):
@@ -206,6 +216,10 @@ def _offers_json(conn, user):
     for m in db.user_matches(conn, user["id"]):
         item = {k: m.get(k) for k in MATCH_FIELDS}
         item["wanted"] = bool(m["wanted"])
+        # rated from a results page's tile, with no text of the offer
+        item["brief"] = not portals.searchable(m["portal"]) and \
+            not m["has_text"]
+        item["portal_name"] = portals.name(m["portal"])
         # the model's score, less the points of the wishes not met
         item["fit"] = m["score"]
         item["score"] = None if m["score"] is None else \
@@ -228,6 +242,9 @@ def _offers_json(conn, user):
         "status": offers.status(user["id"]),
         "offers_at": row["offers_at"], "wanted": bool(row["offers_wanted"]),
         "interval": config.OFFERS_INTERVAL,
+        "importers": [{"id": k, "name": portals.name(k),
+                       "offer": portals.PORTALS[k]["import"].get("offer")}
+                      for k in portals.imported()],
         "daily": {"limit": db.daily_reviews(conn, user["id"]),
                   "used": db.reviews_since(conn, user["id"],
                                            offers.day_start(row)),
@@ -460,8 +477,30 @@ class Handler(SimpleHTTPRequestHandler):
     def _offers(self, conn, user, method, action):
         if method == "GET" and not action:
             return _offers_json(conn, user)
+        if method == "GET":
+            m = re.fullmatch(r"import/(\d+)", action)
+            if m:
+                item = db.get_import(conn, user["id"], int(m.group(1)))
+                if not item:
+                    raise HttpError(404, "Nie ma takiego importu.")
+                data = _offers_json(conn, user)
+                ids = set((item["result"] or {}).get("offers") or [])
+                data["matches"] = [x for x in data["matches"]
+                                   if x["offer_id"] in ids]
+                data["import"] = item
+                return data
+            raise HttpError(404, "Nie ma takiej strony.")
         if method != "POST":
             raise HttpError(405, "Niedozwolona metoda.")
+        if action == "import":
+            page = importer.clean(self._body(MAX_PAGE))
+            if not page:
+                raise HttpError(400, "To nie jest strona z ofertami.")
+            self._can_review(conn, user)
+            import_id = db.add_import(conn, user["id"], page)
+            log.info("%s sent %s", user["username"], page["url"][:120])
+            offers.wake()
+            return {"id": import_id}
         body = self._body()
         if action == "wishes":
             db.save_wishes(conn, user["id"], matching.clean(body.get("wishes")),
@@ -551,9 +590,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     # --- plumbing -------------------------------------------------------
 
-    def _body(self):
+    def _body(self, largest=MAX_BODY):
         length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY:
+        if length > largest:
             raise HttpError(413, "Za duże zapytanie.")
         if "application/json" not in self.headers.get("Content-Type", ""):
             raise HttpError(415, "Oczekiwano JSON.")

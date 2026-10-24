@@ -79,7 +79,8 @@ function fmtSpan(item) {
 }
 
 function renderNav() {
-  const here = PAGES.find(([hash]) => hash === location.hash) || PAGES[0];
+  const here = location.hash.startsWith("#/import") ? PAGES[1]
+    : PAGES.find(([hash]) => hash === location.hash) || PAGES[0];
   fill(nav, me && PAGES.map(([hash, label]) =>
     el("a", { href: hash, class: hash === here[0] ? "active" : null }, label)));
 }
@@ -188,7 +189,7 @@ function route() {
   renderNav();
   if (!me) return showLogin("login");
   const page = PAGES.find(([hash]) => hash === location.hash) || PAGES[0];
-  view = page[2]();
+  view = location.hash.startsWith("#/import") ? new ImportView() : page[2]();
   view.start();
 }
 

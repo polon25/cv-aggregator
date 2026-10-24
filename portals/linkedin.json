@@ -1,0 +1,12 @@
+{
+  "id": "linkedin",
+  "name": "LinkedIn",
+  "country": "",
+  "site": "https://www.linkedin.com/jobs/",
+  "import": {
+    "hosts": ["linkedin.com"],
+    "offer": "/jobs/view/\\d+",
+    "key": "(?:/jobs/view/(?:[^/?#]*-)?|[?&]currentJobId=)(\\d+)",
+    "url": "https://www.linkedin.com/jobs/view/{key}/"
+  }
+}

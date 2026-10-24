@@ -26,6 +26,10 @@
     searches    when a portal was last searched for a term, with what came
                 of it
     places      where a place is (see geo.py), NULL when it wasn't found
+    imports     a page a user sent from their browser (see importer.py):
+                its address, what it showed (`payload`, JSON, dropped once
+                read), status (pending, working, done, failed), what came
+                of it (`result`, JSON) or what went wrong
     matches     an offer kept for a user: how promising it looked to the
                 program (`prescore`), what a model made of it (`review`,
                 with `score` 0..100; `wanted`: the user asked for it,
@@ -101,6 +105,16 @@ CREATE TABLE IF NOT EXISTS profiles (
     offers_at REAL,                      -- offers last looked for
     offers_wanted INTEGER NOT NULL DEFAULT 0,
     wishes_at REAL                       -- what they look for last changed
+);
+CREATE TABLE IF NOT EXISTS imports (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    created_at REAL NOT NULL,
+    url TEXT NOT NULL,
+    payload TEXT,                        -- JSON; NULL once read
+    status TEXT NOT NULL,                -- pending, working, done, failed
+    result TEXT,                         -- JSON, see importer.process
+    error TEXT
 );
 CREATE TABLE IF NOT EXISTS places (
     key TEXT PRIMARY KEY,                -- candidate.normalize(name)
@@ -210,6 +224,8 @@ def init():
                      "WHERE status = 'working'")
         conn.execute("UPDATE profiles SET analysis_status = 'pending' "
                      "WHERE analysis_status = 'working'")
+        conn.execute("UPDATE imports SET status = 'pending' WHERE "
+                     "status = 'working' AND payload IS NOT NULL")
         # offers are judged again after a restart, by the program as it
         # is now (no portal is asked again before its time)
         conn.execute("UPDATE profiles SET offers_wanted = 1 WHERE wishes "
@@ -761,7 +777,8 @@ def _match_row(row):
 
 MATCH_COLUMNS = (
     "m.offer_id, m.created_at, m.prescore, m.status, m.wanted, m.extra, "
-    "m.unmet, m.penalty, m.score, "
+    "m.unmet, m.penalty, m.score, (o.details IS NOT NULL AND o.details != "
+    "'') AS has_text, "
     "m.review, m.review_error, m.model, m.reviewed_at, o.portal, o.url, "
     "o.data, o.first_seen, o.last_seen")
 
@@ -887,3 +904,83 @@ def rescore_matches(conn, user_id, scored):
 def users_wanting_reviews(conn):
     return [r["user_id"] for r in conn.execute(
         "SELECT DISTINCT user_id FROM matches WHERE wanted = 1")]
+
+
+# --- pages sent from the browser ------------------------------------------
+
+def add_import(conn, user_id, payload):
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO imports (user_id, created_at, url, payload, status) "
+            "VALUES (?, ?, ?, ?, 'pending')",
+            (user_id, time.time(), payload["url"],
+             json.dumps(payload, ensure_ascii=False)))
+    return cursor.lastrowid
+
+
+def claim_import(conn):
+    """The oldest page waiting to be read, marked as being read."""
+    row = conn.execute("SELECT * FROM imports WHERE status = 'pending' "
+                       "ORDER BY id LIMIT 1").fetchone()
+    if not row:
+        return None
+    with conn:
+        conn.execute("UPDATE imports SET status = 'working' WHERE id = ?",
+                     (row["id"],))
+    row["payload"] = json.loads(row["payload"])
+    return row
+
+
+def finish_import(conn, import_id, result=None, error=None):
+    with conn:
+        conn.execute("UPDATE imports SET status = ?, result = ?, error = ?, "
+                     "payload = NULL WHERE id = ?",
+                     ("failed" if error else "done",
+                      json.dumps(result) if result else None, error,
+                      import_id))
+
+
+def get_import(conn, user_id, import_id):
+    row = conn.execute("SELECT id, created_at, url, status, result, error "
+                       "FROM imports WHERE id = ? AND user_id = ?",
+                       (import_id, user_id)).fetchone()
+    if row:
+        row["result"] = json.loads(row["result"]) if row["result"] else None
+    return row
+
+
+def offer_ids(conn, pairs):
+    """{(portal, key): id} of offers kept."""
+    out = {}
+    for portal, key in pairs:
+        row = conn.execute("SELECT id FROM offers WHERE portal = ? AND "
+                           "key = ?", (portal, str(key))).fetchone()
+        if row:
+            out[(portal, key)] = row["id"]
+    return out
+
+
+def offers_by_id(conn, ids):
+    return [_offer_row(conn.execute(
+        "SELECT id, portal, key, url, data, first_seen, last_seen FROM "
+        "offers WHERE id = ?", (i,)).fetchone()) for i in ids]
+
+
+def keep_matches(conn, user_id, scored):
+    """[(offer id, prescore, unmet, penalty)] kept for the user: added, or
+    judged anew if kept already."""
+    known = matched_ids(conn, user_id)
+    add_matches(conn, user_id, [s for s in scored if s[0] not in known])
+    rescore_matches(conn, user_id, [s for s in scored if s[0] in known])
+
+
+def want_reviews(conn, user_id, offer_ids, rated_before=None):
+    """Asks for the offers to be rated (not counting in the day's number):
+    all of them, or, with `rated_before`, those not rated since then."""
+    sql = "UPDATE matches SET wanted = 1, review_error = NULL WHERE " \
+        "user_id = ? AND offer_id = ?"
+    if rated_before is not None:
+        sql += " AND (reviewed_at IS NULL OR reviewed_at < ?)"
+    extra = () if rated_before is None else (rated_before,)
+    with conn:
+        conn.executemany(sql, [(user_id, i) + extra for i in offer_ids])

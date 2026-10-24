@@ -11,7 +11,11 @@ may add portals or replace shipped ones by their id):
      and either "parser": one of the parsers in sites.py, for portals that
      need code, with what it takes (e.g. its addresses), or "search" and
      "fields" (and "details"): the portal described, for portals whose
-     lists come as JSON (an API, or JSON in the page)}
+     lists come as JSON (an API, or JSON in the page); or "import" only,
+     for portals the app can't read, whose pages the user sends from
+     their browser (importer.py): {"hosts": its domains, "offer": a regex
+     an offer's address matches, "key": one whose group is its id, "url":
+     an offer's address from {key}, if it should be made so}}
 
 A described portal:
 
@@ -109,8 +113,9 @@ def load():
                 with open(path, encoding="utf-8") as f:
                     portal = json.load(f)
                 if not re.fullmatch(r"[a-z0-9_]+", portal.get("id", "")) or \
-                        not (portal.get("parser") or portal.get("search")):
-                    raise ValueError("no id, or neither parser nor search")
+                        not (portal.get("parser") or portal.get("search") or
+                             portal.get("import")):
+                    raise ValueError("no id, or no parser, search or import")
             except (OSError, ValueError) as e:
                 log.error("Portal %s left out: %s", path, e)
                 continue
@@ -123,13 +128,48 @@ def load():
         not kv[1].get("default", True), kv[1].get("country") or "",
         (kv[1].get("name") or kv[0]).casefold())))
     log.info("Portals: %s", ", ".join(
-        "%s%s" % (k, "" if v.get("default", True) else " (if chosen)")
+        "%s%s" % (k, " (imported)" if not searchable(k) else
+                  "" if v.get("default", True) else " (if chosen)")
         for k, v in PORTALS.items()))
+
+
+def searchable(portal_id):
+    portal = PORTALS.get(portal_id) or {}
+    return bool(portal.get("parser") or portal.get("search"))
 
 
 def defaults():
     """The portals searched for users who chose none."""
-    return [k for k, v in PORTALS.items() if v.get("default", True)]
+    return [k for k, v in PORTALS.items()
+            if searchable(k) and v.get("default", True)]
+
+
+def imported():
+    """The portals the app can't search, whose pages users send."""
+    return [k for k in PORTALS if not searchable(k)]
+
+
+def identify(url):
+    """(portal id, offer key or None, the offer's address) for an address
+    on a portal users send pages of; a portal of none known is named by
+    its host, and its key is the address without query."""
+    parts = urllib.parse.urlsplit(url)
+    host = parts.netloc.lower().split(":")[0]
+    for portal_id, portal in PORTALS.items():
+        spec = portal.get("import")
+        if not spec or not any(host == h or host.endswith("." + h)
+                               for h in spec.get("hosts") or []):
+            continue
+        m = re.search(spec.get("key") or "$^", url)
+        key = m.group(1) if m else None
+        address = template(spec["url"], {"key": key}) if key and \
+            spec.get("url") else urllib.parse.urlunsplit(
+                (parts.scheme, parts.netloc, parts.path, "", ""))
+        return portal_id, key, address
+    plain = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path,
+                                     "", ""))
+    site = re.sub(r"[^a-z0-9]+", "_", re.sub(r"^www\.", "", host)).strip("_")
+    return site or "web", plain, plain
 
 
 def name(portal_id):

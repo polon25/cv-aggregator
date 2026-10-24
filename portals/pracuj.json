@@ -1,0 +1,11 @@
+{
+  "id": "pracuj",
+  "name": "Pracuj.pl",
+  "country": "PL",
+  "site": "https://www.pracuj.pl",
+  "import": {
+    "hosts": ["pracuj.pl"],
+    "offer": ",oferta,\\d+",
+    "key": ",oferta,(\\d+)"
+  }
+}

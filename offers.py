@@ -32,6 +32,7 @@ import candidate
 import config
 import db
 import geo
+import importer
 import llm
 import matching
 import portals
@@ -80,6 +81,8 @@ def _run():
 def _once():
     conn = db.connect()
     try:
+        while _import_one(conn):
+            pass
         now = time.time()
         db.forget_offers(conn, now - 2 * config.OFFER_DAYS * 86400)
         for user_id in db.users_due(conn,
@@ -96,6 +99,31 @@ def _once():
                 _set_status(user_id, None)
     finally:
         conn.close()
+
+
+def _import_one(conn):
+    """Reads one page a user sent (importer.py); False when none waits."""
+    item = db.claim_import(conn)
+    if not item:
+        return False
+    _set_status(item["user_id"], "importing")
+    try:
+        db.finish_import(conn, item["id"], importer.process(conn, item))
+    except importer.ImportFailed as e:
+        db.finish_import(conn, item["id"], error=str(e))
+    except Exception:
+        log.exception("Import %d failed", item["id"])
+        db.finish_import(conn, item["id"], error="Nie udało się odczytać "
+                         "strony.")
+    finally:
+        _set_status(item["user_id"], None)
+    # its offers are rated at once
+    profile, row, _ = db.built_profile(conn, item["user_id"])
+    try:
+        review(conn, item["user_id"], profile, row)
+    finally:
+        _set_status(item["user_id"], None)
+    return True
 
 
 def look(conn, user_id):
@@ -153,7 +181,7 @@ def match(conn, user_id, profile, wishes, analysis):
         if m["status"] != "new" or m["wanted"]:
             kept.append(m)
             continue
-        if m["portal"] not in chosen:
+        if portals.searchable(m["portal"]) and m["portal"] not in chosen:
             gone.append(m["offer_id"])
             continue
         out, penalty, unmet = matching.judge(m, wishes, near(m))
@@ -182,6 +210,23 @@ def match(conn, user_id, profile, wishes, analysis):
     log.info("User %d: %d offers kept, %d dropped (of %d seen lately)",
              user_id, len(added), len(gone), len(offers))
     return len(added)
+
+
+def judge(conn, user_id, offers):
+    """The offers judged by the user's wishes: ([(offer, ruled out,
+    prescore less the points of unmet wishes, unmet, penalty)], the
+    user's profiles row)."""
+    profile, row, _ = db.built_profile(conn, user_id)
+    wishes = row["wishes"]
+    skills = matching.skill_names(profile, wishes)
+    near = _nearness(conn, wishes, offers)
+    out = []
+    for offer in offers:
+        ruled, penalty, unmet = matching.judge(offer, wishes, near(offer))
+        out.append((offer, ruled, _score(offer, wishes, skills,
+                                         row["analysis"], penalty),
+                    unmet, penalty))
+    return out, row
 
 
 def _score(offer, wishes, skills, analysis, penalty):
@@ -242,7 +287,7 @@ def review(conn, user_id, profile, row):
     for n, offer in enumerate(queue, 1):
         _set_status(user_id, "reviewing", n, len(queue))
         text = db.offer_details(conn, offer["offer_id"])
-        if text is None:
+        if text is None and portals.searchable(offer["portal"]):
             try:
                 text = portals.details(offer)
             except portals.PortalError as e:

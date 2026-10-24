@@ -80,8 +80,9 @@ class OffersView {
     if (!this.page) {
       this.head = el("div", {});
       this.wishesPanel = el("section", { class: "panel" });
+      this.buttonPanel = el("section", { class: "panel" });
       this.list = el("section", {});
-      this.page = el("div", { class: "stack" }, this.head, this.wishesPanel, this.list);
+      this.page = el("div", { class: "stack" }, this.head, this.wishesPanel, this.buttonPanel, this.list);
       show(this.page);
     }
     if (this.wishesOpen === null) {
@@ -90,6 +91,10 @@ class OffersView {
     }
     this.renderHead();
     if (first || !this.editing) this.renderWishes();
+    if (first && this.data.importers.length) {
+      fill(this.buttonPanel, bookmarkletPanel(this.data, this.buttonOpen, (open) => { this.buttonOpen = open; }));
+    }
+    this.buttonPanel.hidden = !this.data.importers.length;
     this.renderList();
   }
 
@@ -316,7 +321,7 @@ class OffersView {
     const place = [m.cities.slice(0, 3).join(", ") + (m.cities.length > 3 ? " +" + (m.cities.length - 3) : ""),
                    MODE_NAMES[m.mode]].filter(Boolean).join(" · ");
     const meta = [place, salary, m.contracts.map((c) => CONTRACT_NAMES[c] || c).join("/"), LEVEL_NAMES[m.level],
-                  this.portalName(m.portal)].filter(Boolean);
+                  m.portal_name || this.portalName(m.portal)].filter(Boolean);
     const have = new Set(m.have);
     const mark = (status, label, cls, title) => el("button", {
       class: "btn small " + (cls || "") + (m.status === status ? " on" : ""), type: "button", title,
@@ -342,6 +347,8 @@ class OffersView {
           el("b", {}, "−" + points))),
         m.fit !== null && el("span", { class: "muted" }, " (dopasowanie " + m.fit + " → " + m.score + ")")),
       m.stale && el("p", { class: "hint warn" }, "Ocena sprzed zmiany preferencji – zostanie powtórzona."),
+      m.brief && m.score !== null && el("p", { class: "hint" }, "Oceniona na podstawie kafelka ze strony wyników. " +
+        "Otwórz ofertę i kliknij zakładkę „→ CV Aggregator”, żeby ocenić ją z pełnym opisem."),
       r && el("p", { class: "offer-summary" + (m.stale ? " muted" : "") }, r.summary),
       r && (r.pros.length > 0 || r.cons.length > 0) && el("div", { class: "two pros-cons" },
         el("ul", { class: "pros" }, r.pros.map((p) => el("li", {}, p))),
