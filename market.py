@@ -27,7 +27,7 @@ GENERIC = {"test", "testing", "tests", "oprogramowanie", "oprogramowania",
            "programming", "programowanie", "communication", "teamwork",
            "komunikatywnosc", "praca w zespole", "team player", "analytical",
            "problem solving", "backend", "frontend", "fullstack", "other",
-           "inne", "agile"}
+           "inne", "agile", "application", "applications", "aplikacje"}
 
 
 def _weight(match):
