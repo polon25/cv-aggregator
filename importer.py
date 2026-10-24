@@ -20,6 +20,10 @@ the portal's "offer" pattern)}:
   misses.
 
 Neither counts in the day's number of ratings.
+
+Job alerts that come by mail (alerts.py) are such results pages too
+("mail": true), but their offers aren't rated at once: they wait for the
+day's ratings, like those of the portals the app searches.
 """
 
 import logging
@@ -86,7 +90,7 @@ def process(conn, item):
             seen.add(card_key)
             tiles.append((card_portal, card_key, card_url, card["text"]))
     tiles = tiles[:MAX_CARDS]
-    if not tiles and not single:
+    if not tiles and not single and not page.get("mail"):
         single = key  # a page of a site no portal describes: one offer
     # tiles of offers kept already aren't read again
     known_ids = db.offer_ids(conn, [(t[0], t[1]) for t in tiles])
@@ -137,7 +141,8 @@ def process(conn, item):
     # text), the best of a list unless rated since the wishes changed
     rate = [o["id"] for o, _, _, _, one in kept if one]
     db.want_reviews(conn, item["user_id"], rate)
-    best = [o["id"] for o, *_ in sorted(
+    # (an alert's offers wait for the day's ratings: nobody asked)
+    best = [] if page.get("mail") else [o["id"] for o, *_ in sorted(
         (k for k in kept if not k[4]), key=lambda k: -k[1])][:RATE_LIST]
     db.want_reviews(conn, item["user_id"], best, row["wishes_at"] or 0)
     rate += best

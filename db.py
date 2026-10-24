@@ -1061,6 +1061,19 @@ def set_mailbox(conn, user_id, mailbox, password):
                       vault.seal(password) if password else None, user_id))
 
 
+def save_mailbox_state(conn, user_id, mailbox):
+    """The mailbox's state after reading it (alerts.collect), its password
+    as it is."""
+    with conn:
+        conn.execute("UPDATE users SET mailbox = ? WHERE id = ?",
+                     (json.dumps(mailbox), user_id))
+
+
+def mailbox_users(conn):
+    return [r["id"] for r in conn.execute(
+        "SELECT id FROM users WHERE mailbox IS NOT NULL")]
+
+
 def mailbox(conn, user_id):
     """(the user's mailbox or None, its password or None)."""
     row = conn.execute("SELECT mailbox, mailbox_password FROM users WHERE "

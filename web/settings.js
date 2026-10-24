@@ -202,8 +202,13 @@ async function settingsDialog() {
     mailPassword.value = "";
     mailPassword.placeholder = box ? "zostaw puste, żeby nie zmieniać" : "";
     fill(mailState, box
-      ? el("p", { class: "key-state ok" }, "✓ Połączono ze skrzynką " + box.address + " (" + box.host + "): " +
-          box.messages + " wiadomości w folderze " + box.folder + ", sprawdzono " + fmtTime(box.checked_at) + ". ",
+      ? el("p", { class: "key-state " + (box.error ? "warn" : "ok") },
+          (box.error ? "⚠ Ostatnio nie udało się odczytać skrzynki " + box.address + ": " + box.error + " "
+            : "✓ Skrzynka " + box.address + " (" + box.host + ", folder " + box.folder + "): " + box.messages +
+              " wiadomości. ") +
+          (box.read_at ? "Sprawdzana co pół godziny, ostatnio " + fmtTime(box.read_at) + "; odczytanych alertów: " +
+            (box.alerts || 0) + (box.alert_at ? " (ostatni " + fmtTime(box.alert_at) + ")" : "") + ". "
+            : "Pierwsze odczytanie alertów (z ostatnich 2 tygodni) za chwilę. "),
           el("button", {
             class: "link danger", type: "button", onclick: async () => {
               if (!confirm("Usunąć skrzynkę? Hasło zostanie usunięte z serwera.")) return;

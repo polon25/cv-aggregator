@@ -19,6 +19,10 @@ offers weren't looked for in OFFERS_INTERVAL hours (or who asked for it):
    anew when the wishes change), and any the user asked to have
    rated.
 
+Before all that, job alerts that came to users' mailboxes are read
+(alerts.py) and, with the pages users send from their browser, made
+offers (importer.py).
+
 status(user_id) says what's going on for a user, for their page.
 """
 
@@ -27,7 +31,10 @@ import logging
 import threading
 import time
 
+import imaplib
+
 import agents
+import alerts
 import candidate
 import config
 import db
@@ -82,6 +89,7 @@ def _run():
 def _once():
     conn = db.connect()
     try:
+        _read_mail(conn)
         while _import_one(conn):
             pass
         now = time.time()
@@ -100,6 +108,33 @@ def _once():
                 _set_status(user_id, None)
     finally:
         conn.close()
+
+
+def _read_mail(conn):
+    """Reads the job alerts that came to users' mailboxes since the last
+    time (alerts.py), each user's every config.MAIL_INTERVAL minutes; each
+    alert becomes an import."""
+    for user_id in db.mailbox_users(conn):
+        box, password = db.mailbox(conn, user_id)
+        if not box or not password or time.time() - (
+                box.get("read_at") or 0) < config.MAIL_INTERVAL * 60:
+            continue
+        try:
+            pages, box = alerts.collect(box, password)
+            box.pop("error", None)
+        except (alerts.AlertsError, imaplib.IMAP4.error, OSError) as e:
+            log.warning("Mailbox of user %d not read: %s", user_id, e)
+            box["error"] = str(e)[:300]
+            pages = []
+        box["read_at"] = time.time()
+        for page in pages:
+            db.add_import(conn, user_id, page)
+        if pages:
+            box["alerts"] = box.get("alerts", 0) + len(pages)
+            box["alert_at"] = time.time()
+            log.info("User %d: %d job alerts from their mailbox", user_id,
+                     len(pages))
+        db.save_mailbox_state(conn, user_id, box)
 
 
 def _import_one(conn):

@@ -111,3 +111,9 @@ OFFERS_MAX_REVIEWS = int(os.getenv("OFFERS_MAX_REVIEWS") or "200")
 OFFER_DAYS = int(os.getenv("OFFER_DAYS") or "7")
 # An offer's text is cut to this many characters for the model.
 OFFER_MAX_CHARS = int(os.getenv("OFFER_MAX_CHARS") or "12000")
+# Minutes between two readings of a user's mailbox of job alerts.
+MAIL_INTERVAL = float(os.getenv("MAIL_INTERVAL") or "30")
+# The first reading takes the mails of this many days back.
+MAIL_DAYS = int(os.getenv("MAIL_DAYS") or "14")
+# Mails read at most at a time.
+MAIL_BATCH = int(os.getenv("MAIL_BATCH") or "30")

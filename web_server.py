@@ -436,6 +436,13 @@ class Handler(SimpleHTTPRequestHandler):
             except alerts.AlertsError as e:
                 raise db.Error(str(e))
             box["checked_at"] = time.time()
+            if old and all(old.get(k) == box[k] for k in
+                           ("address", "host", "port", "folder")):
+                # the same mailbox: what was read of it stays read
+                for k in ("uidvalidity", "last_uid", "read_at", "alerts",
+                          "alert_at"):
+                    if k in old:
+                        box[k] = old[k]
             db.set_mailbox(conn, user["id"], box, password)
             log.info("%s set their mailbox %s", user["username"],
                      box["address"])

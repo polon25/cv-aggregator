@@ -75,6 +75,9 @@ Settings (`.env`, see [.env.example](.env.example)):
 | `OFFERS_MAX_REVIEWS` | 200 | the most a user may set |
 | `OFFER_DAYS` | 7 | an offer not seen on its portal for this long is taken as gone (and forgotten after twice that, unless marked) |
 | `OFFER_MAX_CHARS` | 12000 | an offer's text is cut to this many characters for the model |
+| `MAIL_INTERVAL` | 30 | minutes between two readings of a user's mailbox of job alerts |
+| `MAIL_DAYS` | 14 | the first reading takes the mails of this many days back |
+| `MAIL_BATCH` | 30 | mails read at most at a time |
 | `LOG_LEVEL` | `INFO` | |
 
 `.env`, `secret.key` and `data/` stay on the server: they aren't in the
@@ -331,9 +334,20 @@ pracuj.pl and LinkedIn send job alerts by e-mail. The user's own mailbox
 forwards them (a filter) to one kept for the app alone, which they give
 in the settings ([alerts.py](alerts.py)): its address, password (in Gmail
 an app password, with 2-step verification on) and, if its provider isn't
-a common one, IMAP server and folder. The app logs in to check it, opens
-it read-only only, and keeps the password encrypted. Reading the alerts'
-offers is yet to come.
+a common one, IMAP server and folder. The app logs in to check it and
+keeps the password encrypted.
+
+Every `MAIL_INTERVAL` minutes the offers thread reads the mails that came
+since the last time (the first time, those of the last `MAIL_DAYS`
+days), always read-only (`EXAMINE`, `BODY.PEEK`: not even marked as
+read). A mail with links to offers – by the portals' `import.link`
+patterns, whoever sent it, so alerts forwarded by hand do too – becomes
+a results page of tiles, as the bookmarklet sends one: each link and the
+largest element of the mail's HTML around it with no other offer (or, in
+a plain text mail, its block). [importer.py](importer.py) then has a
+model read them and sifts them like any others; their offers wait for
+the day's ratings. Seen in pracuj.pl's alerts (`jobalert@wysylka.pracuj.pl`)
+and LinkedIn's (`jobs-noreply@linkedin.com`, `jobalerts-noreply@linkedin.com`).
 
 ## Data
 
