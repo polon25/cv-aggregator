@@ -22,6 +22,11 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/settings/use     {use_paid, use_free} (either): whether the
                                paid models may be used, and the free ones
     POST /api/settings/reviews {daily}: offers a model rates a day
+    POST /api/settings/mailbox {address, password, host, port, folder}: the
+                               mailbox job alerts are forwarded to, checked
+                               by logging in (alerts.py) and kept, the
+                               password sealed (left empty: the one kept);
+                               {remove: true} forgets it
     GET  /api/models           OpenRouter's models with their prices
     GET  /api/schema           the profile's fields and sections
     GET  /api/profile          the user's CVs, their merged profile, what
@@ -85,6 +90,7 @@ import candidate
 import config
 import db
 import documents
+import alerts
 import importer
 import llm
 import market
@@ -122,6 +128,7 @@ def _settings_json(conn, user):
         "custom": account["custom"], "use_paid": account["use_paid"],
         "use_free": account["use_free"],
         "daily_reviews": db.daily_reviews(conn, user["id"]),
+        "mailbox": db.mailbox(conn, user["id"])[0],
         "max_reviews": config.OFFERS_MAX_REVIEWS,
         "defaults": {"paid": config.OPENROUTER_PAID_MODELS,
                      "free": config.OPENROUTER_MODELS},
@@ -406,6 +413,32 @@ class Handler(SimpleHTTPRequestHandler):
                 db.set_models(conn, user["id"], None, None)
             else:
                 db.set_models(conn, user["id"], *_clean_models(body))
+            return _settings_json(conn, user)
+        if action == "mailbox":
+            if body.get("remove"):
+                db.set_mailbox(conn, user["id"], None, None)
+                log.info("%s removed their mailbox", user["username"])
+                return _settings_json(conn, user)
+            try:
+                box = alerts.clean(body)
+            except alerts.AlertsError as e:
+                raise db.Error(str(e))
+            old, old_password = db.mailbox(conn, user["id"])
+            password = str(body.get("password") or "")
+            if box["host"] == "imap.gmail.com":
+                password = "".join(password.split())  # shown in fours
+            if not password and old and old["address"] == box["address"]:
+                password = old_password  # only the folder or server changed
+            if not password:
+                raise db.Error("Podaj hasło (w Gmailu: hasło do aplikacji).")
+            try:
+                box["messages"] = alerts.check(box, password)
+            except alerts.AlertsError as e:
+                raise db.Error(str(e))
+            box["checked_at"] = time.time()
+            db.set_mailbox(conn, user["id"], box, password)
+            log.info("%s set their mailbox %s", user["username"],
+                     box["address"])
             return _settings_json(conn, user)
         if action == "reviews":
             try:

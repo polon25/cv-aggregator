@@ -325,13 +325,23 @@ page posts it to `/api/offers/import` and shows what comes of it.
 Neither counts in the day's number of ratings. It works on other sites'
 offer pages too.
 
+### Job alerts by e-mail
+
+pracuj.pl and LinkedIn send job alerts by e-mail. The user's own mailbox
+forwards them (a filter) to one kept for the app alone, which they give
+in the settings ([alerts.py](alerts.py)): its address, password (in Gmail
+an app password, with 2-step verification on) and, if its provider isn't
+a common one, IMAP server and folder. The app logs in to check it, opens
+it read-only only, and keeps the password encrypted. Reading the alerts'
+offers is yet to come.
+
 ## Data
 
 `data/cv.db` (SQLite) and `data/cvs/<user id>/` (the uploaded files):
 
 | Table | Holds |
 |---|---|
-| `users` | username and PBKDF2-SHA256 password hash; the user's own OpenRouter key, encrypted, their lists of paid and free models and whether each may be used |
+| `users` | username and PBKDF2-SHA256 password hash; the user's own OpenRouter key, encrypted, their lists of paid and free models and whether each may be used; the mailbox their job alerts are forwarded to (address, IMAP server, folder; its password encrypted) |
 | `logins` | login sessions (a 30-day cookie, stored as its SHA-256) |
 | `cvs` | a CV: file name, kind, size, SHA-256 (the same file can't be uploaded twice), its text and language, what the model read from it (JSON), status (`pending`, `working`, `done`, `failed`) and error, which model read it |
 | `profiles` | the user's own description, what they look for (`wishes`, JSON, and `goals`, their words), their changes to the profile (JSON), the analysis (JSON) with its status, model, time and the fingerprint of the profile it was written from, when their offers were last looked for and whether they asked for it |
@@ -353,6 +363,7 @@ offer pages too.
 | `POST /api/settings/key` | `{key}`: checked with OpenRouter, then kept; empty removes it |
 | `POST /api/settings/models` | `{paid, free}`: the user's own lists; `{reset: true}`: the defaults |
 | `POST /api/settings/use` | `{use_paid, use_free}` (either): whether paid, free models may be used |
+| `POST /api/settings/mailbox` | `{address, password, host, port, folder}`: the mailbox job alerts are forwarded to, checked by logging in, then kept (an empty password keeps the one kept); `{remove: true}` forgets it |
 | `POST /api/settings/reviews` | `{daily}`: offers rated a day |
 | `GET /api/models` | OpenRouter's models with their prices |
 | `GET /api/profile` | CVs, the merged profile, what was counted, the user's description, the analysis (and whether it's out of date), whether anything is being worked on |

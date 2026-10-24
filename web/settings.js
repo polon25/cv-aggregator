@@ -1,6 +1,6 @@
 "use strict";
 // The user's settings: their OpenRouter API key, which their CVs are read
-// with, their ladder of models, paid ones and free ones, in the
+// with, the mailbox their job alerts are forwarded to, their ladder of models, paid ones and free ones, in the
 // order the agents ask them, and whether each of the two may be used: free
 // models' providers may keep what they're sent, so they're off until the
 // user turns them on. Uses the helpers of app.js (el, api) and its `me`.
@@ -183,6 +183,46 @@ async function settingsDialog() {
       modelsNote.textContent = "Zapisano.";
     }
   });
+  // --- the mailbox job alerts are forwarded to
+  const mailAddress = el("input", { type: "text", id: "mail-address", autocomplete: "off", maxlength: 200,
+                                    placeholder: "np. moje.alerty@gmail.com" });
+  const mailPassword = el("input", { type: "password", id: "mail-password", autocomplete: "new-password",
+                                     maxlength: 200 });
+  const mailHost = el("input", { type: "text", id: "mail-host", maxlength: 253,
+                                 placeholder: "uzupełni się dla Gmaila, WP, Onetu, Interii…" });
+  const mailFolder = el("input", { type: "text", id: "mail-folder", maxlength: 100, placeholder: "INBOX" });
+  const mailState = el("div", {});
+  const mailError = el("p", { class: "error", role: "alert" });
+  const saveMail = el("button", { class: "btn primary", type: "submit" }, "Sprawdź i zapisz");
+  const renderMailbox = () => {
+    const box = settings.mailbox;
+    mailAddress.value = box ? box.address : "";
+    mailHost.value = box ? box.host : "";
+    mailFolder.value = box ? box.folder : "";
+    mailPassword.value = "";
+    mailPassword.placeholder = box ? "zostaw puste, żeby nie zmieniać" : "";
+    fill(mailState, box
+      ? el("p", { class: "key-state ok" }, "✓ Połączono ze skrzynką " + box.address + " (" + box.host + "): " +
+          box.messages + " wiadomości w folderze " + box.folder + ", sprawdzono " + fmtTime(box.checked_at) + ". ",
+          el("button", {
+            class: "link danger", type: "button", onclick: async () => {
+              if (!confirm("Usunąć skrzynkę? Hasło zostanie usunięte z serwera.")) return;
+              await send("settings/mailbox", { remove: true }, mailError);
+              renderMailbox();
+            },
+          }, "Usuń skrzynkę"))
+      : el("p", { class: "key-state" }, "Nie podano skrzynki."));
+  };
+  async function saveMailbox(e) {
+    e.preventDefault();
+    saveMail.textContent = "Łączę…";
+    if (await send("settings/mailbox", { address: mailAddress.value, password: mailPassword.value,
+                                          host: mailHost.value, folder: mailFolder.value }, mailError, saveMail)) {
+      renderMailbox();
+    }
+    saveMail.textContent = "Sprawdź i zapisz";
+  }
+
   const dialog = el("dialog", { class: "panel settings-dialog" },
     el("div", { class: "item-top" }, el("h2", {}, "Ustawienia"),
       el("button", { class: "btn small", type: "button", onclick: () => dialog.close() }, "Zamknij")),
@@ -237,11 +277,32 @@ async function settingsDialog() {
           if (await send("settings/models", { reset: true }, modelsError)) modelsNote.textContent = "Przywrócono domyślne.";
         },
       }, "Przywróć domyślne"),
-      saveModels));
+      saveModels),
+
+    el("h3", { class: "form-section" }, "Skrzynka z alertami o ofertach"),
+    el("p", { class: "hint" }, "pracuj.pl i LinkedIn wysyłają powiadomienia o nowych ofertach mailem. Przekazuj je " +
+      "filtrem ze swojej skrzynki na osobną, założoną tylko dla tej aplikacji, i podaj ją tutaj – aplikacja nie " +
+      "dostanie dostępu do twojej prywatnej poczty. W Gmailu potrzebne jest hasło do aplikacji (",
+      el("a", { href: "https://myaccount.google.com/apppasswords", target: "_blank", rel: "noopener" },
+        "myaccount.google.com/apppasswords"),
+      ", przy włączonej weryfikacji dwuetapowej). Hasło jest przechowywane na serwerze zaszyfrowane; skrzynka " +
+      "jest tylko czytana."),
+    mailState,
+    el("form", { onsubmit: saveMailbox },
+      el("div", { class: "two mail-fields" },
+        el("div", {}, el("label", { for: "mail-address" }, "Adres skrzynki"), mailAddress),
+        el("div", {}, el("label", { for: "mail-password" }, "Hasło (do aplikacji)"), mailPassword)),
+      el("details", { class: "mail-more" }, el("summary", {}, "Serwer i folder"),
+        el("div", { class: "two mail-fields" },
+          el("div", {}, el("label", { for: "mail-host" }, "Serwer IMAP"), mailHost),
+          el("div", {}, el("label", { for: "mail-folder" }, "Folder"), mailFolder))),
+      el("div", { class: "row end" }, saveMail),
+      mailError));
   dialog.addEventListener("close", () => dialog.remove());
   renderKey();
   renderSwitch();
   renderModelLists();
+  renderMailbox();
   document.body.append(dialog);
   dialog.showModal();
 }

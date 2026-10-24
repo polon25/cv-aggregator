@@ -213,6 +213,9 @@ label.toggle input:disabled + span { opacity: .55; }
 .model-box.off { opacity: .5; }
 .model-box { margin-left: 1.7rem; }
 .settings-dialog .model-last { margin-left: 1.7rem; }
+.mail-fields { gap: 0 1rem; }
+.mail-more { margin-top: .8rem; font-size: .9rem; }
+.mail-more summary { cursor: pointer; color: var(--muted); }
 .hint.warn { color: var(--warn); }
 
 /* --- the profile (profile.js) --- */

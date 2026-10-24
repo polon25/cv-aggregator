@@ -3,8 +3,9 @@
 
     users       username and password hash (PBKDF2-SHA256); the user's
                 OpenRouter key (sealed, see vault.py; NULL: none given),
-                own lists of paid and free models, and whether
-                each of the two may be used
+                own lists of paid and free models, and whether each of
+                the two may be used; the mailbox their job alerts are
+                forwarded to (alerts.py; its password sealed)
     logins      login sessions, by the SHA-256 of their cookie token
     cvs         a user's uploaded CV: file name, kind, its text, and what a
                 model read from it (status: pending, working, done,
@@ -67,7 +68,9 @@ CREATE TABLE IF NOT EXISTS users (
     free_models TEXT,
     use_paid INTEGER,                    -- NULL: the default
     use_free INTEGER,                    -- NULL: the default
-    daily_reviews INTEGER                -- offers rated a day; NULL: default
+    daily_reviews INTEGER,               -- offers rated a day; NULL: default
+    mailbox TEXT,                        -- JSON, see alerts.py; NULL: none
+    mailbox_password TEXT                -- sealed (vault.py)
 );
 CREATE TABLE IF NOT EXISTS logins (
     token_hash TEXT PRIMARY KEY,
@@ -173,6 +176,7 @@ CREATE INDEX IF NOT EXISTS matches_by_review ON matches (user_id, reviewed_at);
 
 ADDED_COLUMNS = (
     ("users", "use_free", "INTEGER"), ("users", "daily_reviews", "INTEGER"),
+    ("users", "mailbox", "TEXT"), ("users", "mailbox_password", "TEXT"),
     ("profiles", "wishes", "TEXT"), ("profiles", "offers_at", "REAL"),
     ("profiles", "offers_wanted", "INTEGER NOT NULL DEFAULT 0"),
     ("profiles", "wishes_at", "REAL"),
@@ -1043,3 +1047,24 @@ def finish_growth(conn, user_id, advice=None, model=None, error=None):
                      "WHERE user_id = ?",
                      (json.dumps(advice, ensure_ascii=False), time.time(),
                       json.dumps(model), user_id))
+
+
+# --- the mailbox job alerts come to ----------------------------------------
+
+def set_mailbox(conn, user_id, mailbox, password):
+    """The user's mailbox ({address, host, port, folder, ...}) and its
+    password, sealed; None for both removes it."""
+    with conn:
+        conn.execute("UPDATE users SET mailbox = ?, mailbox_password = ? "
+                     "WHERE id = ?",
+                     (json.dumps(mailbox) if mailbox else None,
+                      vault.seal(password) if password else None, user_id))
+
+
+def mailbox(conn, user_id):
+    """(the user's mailbox or None, its password or None)."""
+    row = conn.execute("SELECT mailbox, mailbox_password FROM users WHERE "
+                       "id = ?", (user_id,)).fetchone() or {}
+    if not row.get("mailbox"):
+        return None, None
+    return json.loads(row["mailbox"]), vault.unseal(row["mailbox_password"])
