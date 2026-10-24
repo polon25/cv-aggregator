@@ -5,6 +5,5 @@ data/
 __pycache__/
 venv/
 
-# Notes and tools for agents working on this project (local only).
-.agent/
-CLAUDE.local.md
+# Agents' instructions, notes and tools for this project (local only).
+.claude/
