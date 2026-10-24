@@ -36,8 +36,8 @@ def _weight(match):
     return max(0.0, match["prescore"]) * 0.8
 
 
-def _has(key, own, names, languages):
-    if key in own or candidate.name_key("languages", key) in languages:
+def _has(key, own, names):
+    if matching.has_skill(key, own):
         return True
     return any((candidate.similarity(key, name) or 0) >= 0.9
                for name in names)
@@ -61,8 +61,6 @@ def demand(conn, user_id, profile, wishes):
     since = time.time() - 2 * config.OFFER_DAYS * 86400
     own = matching.skill_names(profile, wishes)
     names = [i["name"] for i in profile["sections"]["skills"]]
-    languages = {candidate.name_key("languages", i["name"])
-                 for i in profile["sections"]["languages"]}
     counted, asks = 0, []
     for m in db.user_matches(conn, user_id):
         weight = _weight(m)
@@ -72,7 +70,10 @@ def demand(conn, user_id, profile, wishes):
         counted += 1
         for name, share in [(s, 1.0) for s in m["skills"]] + \
                 [(s, NICE) for s in m["nice"]]:
-            key = candidate.normalize(name)
+            # a language counts as one, whatever form it's named in
+            language = candidate.language_of(name)
+            key = "lang:" + language if language else \
+                candidate.normalize(name)
             if key and key not in GENERIC:
                 asks.append((key, name, share, weight, m))
     general = _general({key for key, *_ in asks})
@@ -97,7 +98,7 @@ def demand(conn, user_id, profile, wishes):
                          in sorted(entry["examples"],
                                    reverse=True)[:EXAMPLES]],
         }
-        if _has(key, own, names, languages):
+        if _has(key, own, names):
             if item["offers"] >= LEAST_OFFERS:
                 have.append(item)
         elif item["offers"] >= LEAST_OFFERS:

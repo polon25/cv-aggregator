@@ -269,17 +269,35 @@ def _url_key(url):
 
 # --- telling whether two items are the same --------------------------------
 
-LANGUAGE_NAMES = {
-    "english": "angielski", "polish": "polski", "german": "niemiecki",
-    "russian": "rosyjski", "french": "francuski", "spanish": "hiszpański",
-    "italian": "włoski", "ukrainian": "ukraiński", "czech": "czeski",
-    "portuguese": "portugalski", "dutch": "niderlandzki",
-    "swedish": "szwedzki", "norwegian": "norweski", "japanese": "japoński",
-    "chinese": "chiński", "korean": "koreański", "arabic": "arabski",
-    "hungarian": "węgierski", "slovak": "słowacki", "latin": "łaciński",
-    "deutsch": "niemiecki", "angielskiego": "angielski",
-    "niemieckiego": "niemiecki", "rosyjskiego": "rosyjski",
+# A language by the beginning of a word naming it, in any form ("język
+# angielski", "znajomość języka angielskiego", "English (B2)").
+LANGUAGE_STEMS = {
+    "angiel": "angielski", "english": "angielski", "polsk": "polski",
+    "polish": "polski", "niemiec": "niemiecki", "german": "niemiecki",
+    "deutsch": "niemiecki", "rosyjs": "rosyjski", "russian": "rosyjski",
+    "francus": "francuski", "french": "francuski", "hiszpan": "hiszpański",
+    "spanish": "hiszpański", "wlosk": "włoski", "italian": "włoski",
+    "ukrain": "ukraiński", "czesk": "czeski", "czech": "czeski",
+    "portugal": "portugalski", "niderland": "niderlandzki",
+    "holender": "niderlandzki", "dutch": "niderlandzki",
+    "szwedz": "szwedzki", "swedish": "szwedzki", "norwes": "norweski",
+    "norwegian": "norweski", "japons": "japoński", "japanese": "japoński",
+    "chinsk": "chiński", "chinese": "chiński", "mandarin": "chiński",
+    "korean": "koreański", "koreans": "koreański", "arabs": "arabski",
+    "arabic": "arabski", "wegiers": "węgierski", "hungarian": "węgierski",
+    "slowack": "słowacki", "slovak": "słowacki", "lacins": "łaciński",
+    "latin": "łaciński",
 }
+
+
+def language_of(name):
+    """The language a skill or a language's name names ("angielski"), or
+    None."""
+    for word in normalize(name).split():
+        for stem, language in LANGUAGE_STEMS.items():
+            if word.startswith(stem):
+                return language
+    return None
 # Words that tell nothing about which organization it is.
 FILLER = {"sp", "z", "o", "oo", "sa", "s", "a", "ltd", "inc", "gmbh", "llc",
           "co", "the", "of", "and", "i", "w", "spolka", "akcyjna"}
@@ -383,10 +401,8 @@ def _dated_match(a, b, place, what):
 
 def name_key(section, name):
     key = normalize(name)
-    if section == "languages":
-        key = LANGUAGE_NAMES.get(key.split(" ")[0], key.split(" ")[0]) \
-            if key else key
-        key = normalize(key)
+    if section == "languages" and key:
+        key = normalize(language_of(name) or key.split(" ")[0])
     return key
 
 

@@ -251,8 +251,11 @@ def rule_out(offer, wishes, near=None):
 
 
 def skill_names(profile, wishes):
-    """The candidate's skills and keywords, normalized, for prescore()."""
-    names = set()
+    """The candidate's skills and keywords, normalized, and their
+    languages, as "lang:<name>" (see has_skill())."""
+    names = {"lang:" + language for language in (
+        candidate.language_of(i["name"])
+        for i in profile["sections"]["languages"]) if language}
     for item in profile["sections"]["skills"]:
         names.add(candidate.normalize(item["name"]))
     for item in profile["sections"]["experience"] + \
@@ -271,6 +274,16 @@ def _role_match(title, role):
     return max(share, candidate.similarity(title, role) or 0.0)
 
 
+def has_skill(name, skills):
+    """Whether the candidate has a skill an offer asks for, by
+    skill_names(): by its name, or the language it names ("język
+    angielski (B2)" for one who speaks English)."""
+    if candidate.normalize(name) in skills:
+        return True
+    language = candidate.language_of(name)
+    return bool(language) and "lang:" + language in skills
+
+
 def prescore(offer, wishes, skills, analysis=None):
     """0..1: how promising the offer looks. The title against the roles
     sought (or, without any, the analysis' roles) counts most, then how
@@ -284,7 +297,7 @@ def prescore(offer, wishes, skills, analysis=None):
     role = max((_role_match(title, r) for r in roles if r), default=0.0)
     wanted = [s for s in offer["skills"] if candidate.normalize(s)]
     if wanted:
-        had = sum(1 for s in wanted if candidate.normalize(s) in skills)
+        had = sum(1 for s in wanted if has_skill(s, skills))
         skill = had / len(wanted)
     else:
         skill = 0.3  # nothing to go by

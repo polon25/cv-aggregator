@@ -240,7 +240,7 @@ def _offers_json(conn, user):
                              m["reviewed_at"] < row["wishes_at"])
         item["model"] = (m["model"] or {}).get("model")
         item["have"] = [s for s in m["skills"]
-                        if candidate.normalize(s) in skills]
+                        if matching.has_skill(s, skills)]
         matches.append(item)
     paths = (row["analysis"] or {}).get("career_paths") or []
     return {

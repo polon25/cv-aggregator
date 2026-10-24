@@ -199,8 +199,10 @@ much as it fits (its score less unmet wishes, or its prescore until
 rated; skills only wished for count half), split into the ones the
 candidate lacks (asked by two offers at least) and the ones they have.
 Forms of one skill count as one ("NI TestStand" as "TestStand"), tags
-that name no skill ("Testing", "Software") are left out, the candidate's
-languages count as theirs. A model then writes 3–5 steps to take
+that name no skill ("Testing", "Software") are left out, and a language
+counts as one whatever it's called ("język angielski (B2)", "English")
+and as the candidate's if their profile has it – as it does in the
+offers' skills and their score. A model then writes 3–5 steps to take
 (`agents.advise`), from those numbers and what it found missing in the
 best offers – on request, and once a day after offers are rated.
 
