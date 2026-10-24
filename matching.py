@@ -50,6 +50,8 @@ EXCEPTION_PAY = 0.2
 EXCEPTION_SCORE = 75
 # ...and rated with at most this share of the day's number of ratings.
 EXCEPTION_SHARE = 0.2
+# Rated offers a model gave less than this are shown only on request.
+WEAK_SCORE = 50
 # Offers scoring less than this aren't kept for the user at all.
 MIN_PRESCORE = 0.15
 

@@ -186,7 +186,8 @@ teraz", or saving "Czego szukam"):
    kolejnych"). Exceptions get a fifth of the day's number at most, and
    the model is told which criterion they break; only the ones it rates
    75 at least are shown among the best, marked, and at most half as many
-   as the rest. The candidate's profile is the system prompt, the
+   as the rest. Offers rated below 50 are shown only on request ("Pokaż
+   słabiej dopasowane oferty"). The candidate's profile is the system prompt, the
    same for all their offers, so models that cache read it for a tenth.
 
 ## Portals

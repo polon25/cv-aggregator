@@ -33,6 +33,8 @@ class OffersView {
     this.timer = null;
     this.stopped = false;
     this.tab = "best";
+    this.weak = [];
+    this.showWeak = false;
     this.editing = false; // the wishes' form has unsaved changes
     this.wishesOpen = null;
   }
@@ -248,12 +250,16 @@ class OffersView {
 
   // --- the offers
 
-  // The best offers: rated ones fitting every criterion, and exceptions
-  // rated at least exception_score, at most half as many (two at least).
+  // The best offers: rated ones fitting every criterion and rated at
+  // least weak_score, and exceptions rated at least exception_score, at
+  // most half as many (two at least). The weak ones (fitting, rated lower)
+  // are shown only on request.
   bestOffers(items) {
-    const plain = items.filter((m) => !m.outside);
+    const plain = items.filter((m) => !m.outside && m.score >= this.data.weak_score);
     const odd = items.filter((m) => m.outside && m.score >= this.data.exception_score)
       .sort((a, b) => b.score - a.score).slice(0, Math.max(2, Math.floor(plain.length / 2)));
+    this.weak = items.filter((m) => !m.outside && m.score < this.data.weak_score)
+      .sort((a, b) => b.score - a.score);
     return plain.concat(odd);
   }
 
@@ -264,6 +270,13 @@ class OffersView {
       return [key, label, key === "best" ? this.bestOffers(items) : items];
     });
     const [, , shown] = tabs.find(([key]) => key === this.tab);
+    const weak = this.tab === "best" && this.weak.length > 0 && el("div", { class: "weak" },
+      el("button", {
+        class: "btn small", type: "button", "aria-expanded": this.showWeak ? "true" : "false",
+        onclick: () => { this.showWeak = !this.showWeak; this.renderList(); },
+      }, (this.showWeak ? "Ukryj" : "Pokaż") + " słabiej dopasowane oferty (" + this.weak.length + ")"),
+      el("span", { class: "muted small" }, "ocenione poniżej " + this.data.weak_score),
+      this.showWeak && el("div", { class: "offer-list" }, this.weak.map((m) => this.card(m))));
     if (this.tab === "todo") shown.sort((a, b) => (b.wanted - a.wanted) || (b.prescore - a.prescore));
     if (this.tab === "best") shown.sort((a, b) => b.score - a.score);
     const empty = {
@@ -290,7 +303,9 @@ class OffersView {
           onclick: () => this.act("offers/more"),
         }, "Oceń " + this.data.more + " kolejnych")),
       shown.length ? el("div", { class: "offer-list" }, shown.map((m) => this.card(m)))
-        : el("p", { class: "muted empty-list" }, empty));
+        : el("p", { class: "muted empty-list" }, this.tab === "best" && this.weak.length
+          ? "Żadna z ocenionych ofert nie jest dopasowana dobrze – poniżej są słabiej dopasowane." : empty),
+      weak);
   }
 
   card(m) {

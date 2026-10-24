@@ -231,6 +231,7 @@ def _offers_json(conn, user):
                   offers.day_start(row) == row["wishes_at"]},
         "more": MORE_REVIEWS,
         "exception_score": matching.EXCEPTION_SCORE,
+        "weak_score": matching.WEAK_SCORE,
         "fresh": time.time() - 2 * 86400,
         "matches": matches,
     }
