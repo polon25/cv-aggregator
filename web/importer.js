@@ -14,9 +14,9 @@
 // It opens the app's tab at once (a click allows that, a later moment
 // not), scrolls the list the offers are in from top to bottom, so that a
 // portal drawing tiles as they come into view (LinkedIn) draws them all,
-// and back – unless this tab sent this list already (the same address
-// but the open offer's currentJobId): then the list's tiles aren't sent,
-// just the page with the open offer – then takes what the browser shows – the text, JSON-LD
+// and back – unless this tab sent every offer of the list already (then
+// the list's tiles aren't sent, just the page with the open offer) – then
+// takes what the browser shows – the text, JSON-LD
 // JobPostings, and the tile around each offer: the largest element around
 // its link with no other offer in it, or the element carrying its id –
 // packs it (gzip, base64url) and sends the tab to the app with it in the
@@ -58,11 +58,16 @@ async function sendPage(app, specs) {
   var offerLinks = function () {
     return [].slice.call(document.querySelectorAll("a[href]")).filter(function (a) { return offerOf(a.href); });
   };
-  // a list sent from this tab already (LinkedIn keeps its list while
-  // another offer is picked) isn't sent again: the open offer is
-  var list = location.href.replace(/([?&])currentJobId=\d+&?/, "$1").replace(/[?&#]+$/, "");
-  var again = window.__cvAggregatorList === list;
-  window.__cvAggregatorList = list;
+  // a list whose offers this tab sent already (LinkedIn keeps its list
+  // while another offer is picked) isn't sent again: the open offer is;
+  // one with any offer not sent yet (another page of results, another
+  // search) is, whatever the address says
+  var sent = window.__cvAggregatorSent = window.__cvAggregatorSent || {};
+  var shown = offerLinks().map(function (a) { return offerOf(a.href).key; })
+    .concat(marked().map(idOf).filter(Boolean).map(function (o) { return o.key; }));
+  var open = (/[?&]currentJobId=(\d+)/.exec(location.href) || [])[1];
+  shown = shown.filter(function (key) { return !open || key.split(":")[1] !== open; });
+  var again = shown.length > 0 && shown.every(function (key) { return sent[key]; });
   // the list: the scrolled element around the first tile
   var first = !again && (marked()[0] || offerLinks()[0]), box = first;
   while (box && box !== document.body && !(box.scrollHeight > box.clientHeight + 20 &&
@@ -95,14 +100,15 @@ async function sendPage(app, specs) {
            })) {
       el = el.parentElement;
     }
-    cards.push({ url: offer.url, text: text(el, 600) });
+    cards.push({ key: offer.key, url: offer.url, text: text(el, 600) });
   });
   (again ? [] : marked()).forEach(function (el) {
     var offer = idOf(el);
     if (!offer || !offer.url || seen[offer.key]) return;
     seen[offer.key] = 1;
-    cards.push({ url: offer.url, text: text(el, 600) });
+    cards.push({ key: offer.key, url: offer.url, text: text(el, 600) });
   });
+  cards.forEach(function (c) { sent[c.key] = 1; });
   var data = JSON.stringify({
     url: location.href, title: document.title, ld: ld.slice(0, 1), cards: cards.slice(0, 120),
     text: text(document.querySelector("main") || document.body, 20000),
