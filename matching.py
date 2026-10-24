@@ -34,7 +34,7 @@ LEVELS = [("intern", "staż / praktyki"), ("junior", "junior"),
           ("lead", "lead / ekspert / kierownik")]
 LISTS = ("roles", "keywords", "cities", "avoid")
 CHOICES = {"modes": MODES, "contracts": CONTRACTS, "levels": LEVELS}
-MAX_ENTRIES = 50  # in a list of the form: a guard, not a limit to plan by
+MAX_ENTRIES = 20  # in a list of the form
 MAX_ENTRY = 80
 # Rough złoty rates, for pay in other currencies against the user's least.
 RATES = {"PLN": 1, "EUR": 4.3, "USD": 4.0, "GBP": 5.0, "CHF": 4.5}
