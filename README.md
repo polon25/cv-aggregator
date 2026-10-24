@@ -164,30 +164,29 @@ teraz", or saving "Czego szukam"):
    their cities, by the coordinates the portal gives or, without them,
    its cities' (from OpenStreetMap's Nominatim, [geo.py](geo.py), a
    request a second at most, each place asked about once); remote offers
-   pass anywhere –
-   pay whose top is below the user's least (other currencies roughly in
-   złoty), no pay given if the user wants only offers that give it (they
-   pass by default), the wrong contract or level, or a word to avoid in its title or
-   company; offers no portal says otherwise of pass. The rest get a score
-   0..1: the title against the roles sought (the share of their words it
-   has, whatever the inflection), the share of the offer's skills the
-   candidate has, keywords in the title. Promising ones are kept for the
-   user, once even when two portals list the same job; ones kept earlier
-   and not marked are judged again by the wishes as they are, rated ones
-   too. Unless the user turns it off, an offer breaking just one criterion
-   that may be overlooked – its level, contract, pay up to 20% below the
-   least, or not saying what it pays – is kept as an exception when it
-   scores 0.7 at least.
+   pass anywhere – or a word to avoid in its title or company. Other
+   wishes it doesn't meet cost points instead (`matching.PENALTY`, unless
+   the user wants them to rule out too): a level next to the ones sought
+   10, one farther 25, a contract not sought 15, no pay given when the
+   user wants it given 10, pay whose top is below the user's least a
+   point a percent short (other currencies roughly in złoty), 40 at most.
+   What a portal doesn't say passes. The rest get a score 0..1: the title
+   against the roles sought (the share of their words it has, whatever
+   the inflection), the share of the offer's skills the candidate has,
+   keywords in the title, less the points. Promising ones are kept for
+   the user, once even when two portals list the same job; ones kept
+   earlier and not marked are judged again by the wishes as they are,
+   rated ones too.
 3. **Rating** ([agents.py](agents.py), a model): the most promising not
    rated since the user last changed what they look for, with their full
    text from the portal, get a score 0–100, a summary, what fits and what
    doesn't – up to the user's number a day (counted anew when they change
    what they look for), plus any they asked for ("Oceń", "Oceń 10
-   kolejnych"). Exceptions get a fifth of the day's number at most, and
-   the model is told which criterion they break; only the ones it rates
-   75 at least are shown among the best, marked, and at most half as many
-   as the rest. Offers rated below 50 are shown only on request ("Pokaż
-   słabiej dopasowane oferty"). The candidate's profile is the system prompt, the
+   kolejnych"). The model judges how the offer fits the candidate and
+   what they want to do, not place, pay or contract: the program takes
+   the points for unmet wishes off its score, and the offer shows which
+   and how many. Offers scoring below 50 are shown only on request
+   ("Pokaż słabiej dopasowane oferty"). The candidate's profile is the system prompt, the
    same for all their offers, so models that cache read it for a tenth.
 
 ## Portals
@@ -222,7 +221,7 @@ read in a later version.
 | `offers` | offers found, shared by all users: portal, its id, URL, what the list said (JSON), first and last seen, the full text once fetched |
 | `searches` | when a portal was last searched for a term, how many offers it gave or what went wrong |
 | `places` | a town's coordinates (from Nominatim; none if not found) |
-| `matches` | an offer kept for a user: the program's score, the user's mark (`new`, `interested`, `applied`, `rejected`), whether they asked for a rating, the model's score and review (JSON), who wrote it and when |
+| `matches` | an offer kept for a user: the program's score, the wishes it doesn't meet and their points, the user's mark (`new`, `interested`, `applied`, `rejected`), whether they asked for a rating, the model's score and review (JSON), who wrote it and when |
 
 ### API
 

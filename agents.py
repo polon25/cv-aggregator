@@ -192,8 +192,12 @@ def analyze(profile_text, stats, account):
 
 REVIEW = """Jesteś doświadczonym rekruterem i doradcą kariery. Oceniasz, jak \
 dobrze oferta pracy pasuje do kandydata: do jego doświadczenia i umiejętności \
-oraz do tego, czego szuka. Bądź rzetelny i konkretny, odwołuj się do faktów \
-z profilu i z oferty; nie zawyżaj ocen.
+oraz do tego, czym chce się zajmować. Bądź rzetelny i konkretny, odwołuj się \
+do faktów z profilu i z oferty; nie zawyżaj ocen. Miejsca i trybu pracy, \
+wynagrodzenia, rodzaju umowy ani poziomu stanowiska względem oczekiwań \
+kandydata nie oceniaj i nie wymieniaj w zaletach ani wadach: to sprawdza \
+osobno program. Oceniaj, czy kandydat poradzi sobie z tą pracą i czy to \
+praca, którą chce wykonywać.
 
 Odpowiedz wyłącznie obiektem JSON, w tej kolejności pól:
 {"summary": "1–2 zdania: czym jest ta praca i jak ma się do kandydata", \
@@ -215,11 +219,6 @@ Poziom stanowiska (junior/senior) zestaw ze stażem kandydata.
 <czego_szuka>
 %s
 </czego_szuka>"""
-
-
-OUTSIDE = """Uwaga: ta oferta nie spełnia jednego z kryteriów kandydata \
-(%s), ale poza tym wygląda na wyjątkowo dobrze dopasowaną. Oceń, czy mimo \
-to warto mu ją pokazać, i wspomnij o tym w wadach."""
 
 
 def _offer_text(offer, text):
@@ -264,15 +263,12 @@ def _validate_review(answer):
             "cons": candidate.clean_value("list", answer.get("cons"), 300)[:5]}
 
 
-def review_offer(profile_text, wishes_text, offer, text, account,
-                 outside=None):
+def review_offer(profile_text, wishes_text, offer, text, account):
     """(review: {summary, pros, cons, score}, who answered) of an offer
-    for a candidate. The candidate goes in the system prompt, the same
-    for all their offers (cached by models that cache). `outside`: the
-    one criterion of the candidate's the offer breaks, kept anyway as it
-    looked exceptionally good (matching.exception)."""
-    if outside:
-        text = (OUTSIDE % outside) + "\n\n" + (text or "")
+    for a candidate: how it fits their experience, skills and what they
+    want to do (matching.judge weighs the rest). The candidate goes in
+    the system prompt, the same for all their offers (cached by models
+    that cache)."""
     messages = [
         {"role": "system", "content": REVIEW % (
             profile_text, wishes_text or "(nie napisał)")},

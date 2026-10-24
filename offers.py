@@ -6,16 +6,18 @@ offers weren't looked for in OFFERS_INTERVAL hours (or who asked for it):
    OFFERS_INTERVAL hours ago, for anyone, isn't asked again: offers are
    shared by all users;
 2. match: every offer seen lately that isn't ruled out by the user's wishes
-   (matching.rule_out; places within the user's distance of their cities,
-   by geo.py) and looks promising enough (matching.prescore) is kept for
-   the user, once even when two portals list it; offers kept earlier and
-   still unmarked are judged again by the wishes as they are (rated ones
-   that no longer do go too);
-3. review: a model rates the most promising ones not rated since the
-   wishes last changed (agents.review_offer), with their full text
-   fetched from the portal, as many a day as the user allows
-   (config.OFFERS_DAILY_REVIEWS or their own number; counted anew when
-   the wishes change), and any the user asked to have rated.
+   (matching.judge; places within the user's distance of their cities, by
+   geo.py) and looks promising enough (matching.prescore, less the points
+   of the wishes it doesn't meet) is kept for the user, once even when
+   two portals list it; offers kept earlier and still unmarked are judged
+   again by the wishes as they are (rated ones that no longer do go too);
+3. review: a model rates how the most promising ones not rated since the
+   wishes last changed fit the candidate (agents.review_offer; the
+   points for unmet wishes are taken off its score when it's shown),
+   with their full text fetched from the portal, as many a day as the
+   user allows (config.OFFERS_DAILY_REVIEWS or their own number; counted
+   anew when the wishes change), and any the user asked to have
+   rated.
 
 status(user_id) says what's going on for a user, for their page.
 """
@@ -142,25 +144,26 @@ def match(conn, user_id, profile, wishes, analysis):
         if m["status"] != "new" or m["wanted"]:
             kept.append(m)
             continue
-        score = matching.prescore(m, wishes, skills, analysis)
-        outside = _fit(m, wishes, near(m), score)
-        if outside is False or (score < matching.MIN_PRESCORE and
-                                not m["reviewed_at"]):
+        out, penalty, unmet = matching.judge(m, wishes, near(m))
+        score = _score(m, wishes, skills, analysis, penalty)
+        if out or (score < matching.MIN_PRESCORE and not m["reviewed_at"]):
             gone.append(m["offer_id"])
         else:
             kept.append(m)
-            rescored.append((m["offer_id"], score, outside))
+            rescored.append((m["offer_id"], score, unmet, penalty))
     added = []
     for offer in offers:
         if offer["id"] in matches:
             continue
-        score = matching.prescore(offer, wishes, skills, analysis)
-        outside = _fit(offer, wishes, near(offer), score)
-        if outside is False or score < matching.MIN_PRESCORE or any(
+        out, penalty, unmet = matching.judge(offer, wishes, near(offer))
+        if out:
+            continue
+        score = _score(offer, wishes, skills, analysis, penalty)
+        if score < matching.MIN_PRESCORE or any(
                 matching.same_offer(offer, other) for other in kept):
             continue
         kept.append(offer)
-        added.append((offer["id"], score, outside))
+        added.append((offer["id"], score, unmet, penalty))
     db.drop_matches(conn, user_id, gone)
     db.rescore_matches(conn, user_id, rescored)
     db.add_matches(conn, user_id, added)
@@ -169,12 +172,11 @@ def match(conn, user_id, profile, wishes, analysis):
     return len(added)
 
 
-def _fit(offer, wishes, near, score):
-    """None if the offer fits every criterion, the one it breaks if it's
-    kept as an exception (matching.exception), False if it's out."""
-    if not matching.rule_out(offer, wishes, near):
-        return None
-    return matching.exception(offer, wishes, near, score) or False
+def _score(offer, wishes, skills, analysis, penalty):
+    """The offer's prescore, less the points of the wishes it doesn't
+    meet."""
+    return round(matching.prescore(offer, wishes, skills, analysis) -
+                 penalty / 100, 3)
 
 
 def _nearness(conn, wishes, offers):
@@ -214,21 +216,17 @@ def review(conn, user_id, profile, row):
     if not account["key"] or not (account["use_paid"] or
                                   account["use_free"]):
         return
-    daily = db.daily_reviews(conn, user_id)
-    start = day_start(row)
-    left = max(0, daily - db.reviews_since(conn, user_id, start))
-    # exceptions get their share at most, the rest what they leave
-    share = max(1, round(daily * matching.EXCEPTION_SHARE)) if daily else 0
+    left = max(0, db.daily_reviews(conn, user_id) - db.reviews_since(
+        conn, user_id, day_start(row)))
     since = time.time() - config.OFFER_DAYS * 86400
-    odd = db.to_review(conn, user_id, since, min(left, max(0, share - (
-        db.reviews_since(conn, user_id, start, exceptions=True)))),
-        row["wishes_at"], exceptions=True)
     queue = db.wanted_reviews(conn, user_id) + db.to_review(
-        conn, user_id, since, left - len(odd), row["wishes_at"]) + odd
+        conn, user_id, since, left, row["wishes_at"])
     if not queue:
         return
     profile_text = candidate.text(profile, row["about"])
-    wishes_text = matching.describe(row["wishes"], row["goals"])
+    # what the program judges by itself the model isn't told
+    wishes_text = matching.describe(row["wishes"], row["goals"],
+                                    criteria=False)
     for n, offer in enumerate(queue, 1):
         _set_status(user_id, "reviewing", n, len(queue))
         text = db.offer_details(conn, offer["offer_id"])
@@ -240,9 +238,8 @@ def review(conn, user_id, profile, row):
                 text = ""
             db.save_offer_details(conn, offer["offer_id"], text)
         try:
-            result, model = agents.review_offer(
-                profile_text, wishes_text, offer, text, account,
-                offer.get("outside"))
+            result, model = agents.review_offer(profile_text, wishes_text,
+                                                offer, text, account)
         except (llm.BadKey, llm.NoModels) as e:
             log.warning("Reviews for user %d stopped: %s", user_id, e)
             return

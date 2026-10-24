@@ -194,8 +194,8 @@ MORE_REVIEWS = 10
 MATCH_FIELDS = ("offer_id", "portal", "url", "title", "company", "cities",
                 "mode", "salary_min", "salary_max", "currency", "contracts",
                 "level", "skills", "nice", "posted", "first_seen",
-                "last_seen", "prescore", "status", "wanted", "outside",
-                "score",
+                "last_seen", "prescore", "status", "wanted", "unmet",
+                "penalty",
                 "review", "review_error", "reviewed_at", "created_at")
 
 
@@ -206,6 +206,10 @@ def _offers_json(conn, user):
     for m in db.user_matches(conn, user["id"]):
         item = {k: m.get(k) for k in MATCH_FIELDS}
         item["wanted"] = bool(m["wanted"])
+        # the model's score, less the points of the wishes not met
+        item["fit"] = m["score"]
+        item["score"] = None if m["score"] is None else \
+            max(0, m["score"] - m["penalty"])
         # rated before what the user looks for last changed
         item["stale"] = bool(m["reviewed_at"] and row["wishes_at"] and
                              m["reviewed_at"] < row["wishes_at"])
@@ -230,7 +234,6 @@ def _offers_json(conn, user):
                   "renewed": bool(row["wishes_at"]) and
                   offers.day_start(row) == row["wishes_at"]},
         "more": MORE_REVIEWS,
-        "exception_score": matching.EXCEPTION_SCORE,
         "weak_score": matching.WEAK_SCORE,
         "fresh": time.time() - 2 * 86400,
         "matches": matches,

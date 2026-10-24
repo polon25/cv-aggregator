@@ -379,12 +379,10 @@ input[type=number] {
 .weak { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .75rem; margin-top: 1.4rem; }
 .weak .offer-list { width: 100%; margin-top: .6rem; }
 .weak .offer { opacity: .85; }
-.outside {
-  display: inline-block; margin: .6rem 0 0; padding: .15rem .6rem; border-radius: 999px; font-size: .82rem;
-  font-weight: 600; background: var(--warn-soft); color: var(--warn);
-}
-label.check.exceptions { margin-top: 1rem; align-items: flex-start; }
-label.check.exceptions input { margin-top: .3rem; }
+.unmet { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: .6rem 0 0; font-size: .85rem; }
+.unmet-chip { padding: .05rem .55rem; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+label.check.flexible { margin-top: 1rem; align-items: flex-start; }
+label.check.flexible input { margin-top: .3rem; }
 @media (max-width: 700px) {
   .nav { margin-left: .25rem; }
   .account > span { display: none; }

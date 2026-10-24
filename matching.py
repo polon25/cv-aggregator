@@ -4,18 +4,19 @@ worked out by the program alone, before any model reads an offer:
     terms()     what to search the portals for: the user's keywords and
                 roles, or, while they've written none, what the analysis
                 suggested
-    reasons()   why an offer is no good whatever a model would think of
-                it: the wrong place (farther than the user's distance from
-                their cities), too little pay (or none given, if the
-                user wants it given), the wrong contract or level, a word
-                the user wants to avoid; rule_out() gives the first, and
-                exception() the one that may be overlooked for an
-                offer that looks exceptionally good
+    judge()     what of the user's wishes an offer doesn't meet: the
+                wrong place (farther than the user's distance from their
+                cities), way of working or a word to avoid rule it out;
+                too little pay (or none given, if the user wants it
+                given), the wrong contract or level cost points
+                (PENALTY), taken off its scores, the program's and the
+                model's (unless the user wants every wish to rule out)
     prescore()  0..1, how promising an offer looks: its title against the
                 roles sought, its skills against the candidate's
 
 Offers that pass go to the model (agents.review_offer) best first, as many
-a day as the user allows.
+a day as the user allows; it judges how they fit the candidate, the points
+for unmet wishes are taken off by the program.
 """
 
 import re
@@ -41,16 +42,14 @@ RATES = {"PLN": 1, "EUR": 4.3, "USD": 4.0, "GBP": 5.0, "CHF": 4.5}
 # set their own; and the most they may.
 DISTANCE = 30
 MAX_DISTANCE = 300
-# An offer breaking one criterion that may be overlooked (its level,
-# contract, pay up to EXCEPTION_PAY below the least, or not saying what it
-# pays) is kept anyway, as an exception, when it scores at least this...
-EXCEPTION_PRESCORE = 0.7
-EXCEPTION_PAY = 0.2
-# ...shown once a model gave it at least this...
-EXCEPTION_SCORE = 75
-# ...and rated with at most this share of the day's number of ratings.
-EXCEPTION_SHARE = 0.2
-# Rated offers a model gave less than this are shown only on request.
+# Points (of a score 0..100) an offer loses for each wish it doesn't meet:
+# a level next to the ones sought, one farther, a contract not sought, not
+# saying what it pays when the user wants it said, and pay below the
+# least, a point a percent short, at most salary_max.
+PENALTY = {"level": 10, "levels": 25, "contract": 15, "no_salary": 10,
+           "salary_max": 40}
+# Rated offers scoring less than this (with what unmet wishes cost) are
+# shown only on request.
 WEAK_SCORE = 50
 # Offers scoring less than this aren't kept for the user at all.
 MIN_PRESCORE = 0.15
@@ -60,7 +59,7 @@ def empty():
     return {"roles": [], "keywords": [], "cities": [], "avoid": [],
             "modes": [], "contracts": [], "levels": [], "portals": [],
             "salary_min": None, "no_salary": True,
-            "distance": DISTANCE, "exceptions": True}
+            "distance": DISTANCE, "flexible": True}
 
 
 def clean(raw):
@@ -83,7 +82,7 @@ def clean(raw):
         wishes["salary_min"] = None
     # offers that don't say what they pay are shown unless turned off
     wishes["no_salary"] = raw.get("no_salary") is not False
-    wishes["exceptions"] = raw.get("exceptions") is not False
+    wishes["flexible"] = raw.get("flexible") is not False
     try:
         distance = int(float(str(raw.get("distance")).replace(",", ".")))
         wishes["distance"] = max(0, min(MAX_DISTANCE, distance))
@@ -99,21 +98,24 @@ def schema():
             "max": MAX_ENTRIES}
 
 
-def describe(wishes, text=""):
-    """The wishes as text for a model."""
+def describe(wishes, text="", criteria=True):
+    """The wishes as text for a model; without the `criteria` the program
+    judges by itself (place, way of working, pay, contract, level)."""
     names = {k: dict(v) for k, v in CHOICES.items()}
     lines = []
     for key, label in (("roles", "Stanowiska / czym chce się zajmować"),
                        ("keywords", "Słowa kluczowe"),
                        ("cities", "Miejscowości (z okolicą)"),
                        ("avoid", "Unika")):
-        if wishes.get(key):
+        if wishes.get(key) and (criteria or key in ("roles", "keywords")):
             lines.append("%s: %s" % (label, ", ".join(wishes[key])))
     for key, label in (("modes", "Tryb pracy"), ("contracts", "Umowa"),
-                       ("levels", "Poziom")):
+                       ("levels", "Poziom")) if criteria else ():
         if wishes.get(key):
             lines.append("%s: %s" % (label, ", ".join(
                 names[key][k] for k in wishes[key])))
+    if not criteria:
+        return "\n".join(lines + ([text] if text else []))
     if wishes.get("cities") and wishes.get("distance"):
         lines.append("Odległość od tych miejscowości: do %d km"
                      % wishes["distance"])
@@ -163,67 +165,78 @@ def _city(city):
     return CITY_NAMES.get(name, name)
 
 
+LEVEL_ORDER = [k for k, _ in LEVELS]
+
+
 def reasons(offer, wishes, near=None):
-    """Why the offer doesn't do: [(a short reason in Polish, whether it
-    may be overlooked for an exceptionally good offer)], empty when it
-    does. `near`: whether any of the offer's places is near enough to the
-    user's cities (None: not known, the cities' names are compared).
-    Place, way of working and words to avoid are never overlooked; nor is
-    pay more than EXCEPTION_PAY below the user's least."""
+    """What of the user's wishes the offer doesn't meet: [(a short reason
+    in Polish, the points it costs, or None when it rules the offer out
+    whatever else)]. `near`: whether any of the offer's places is near
+    enough to the user's cities (None: not known, the cities' names are
+    compared). Place, way of working and words to avoid rule an offer out;
+    the rest costs points (see PENALTY)."""
     found = []
     modes = wishes.get("modes") or []
     if modes and offer["mode"] and offer["mode"] not in modes:
-        found.append(("tryb pracy", False))
+        found.append(("tryb pracy", None))
     cities = {_city(c) for c in wishes.get("cities") or []}
     remote_ok = offer["mode"] == "remote" and (not modes or "remote" in modes)
     if cities and offer["cities"] and not remote_ok:
         if near is None:
             near = any(_city(c) in cities for c in offer["cities"])
         if not near:
-            found.append(("miejscowość", False))
+            found.append(("miejscowość", None))
+    seen = candidate.normalize(offer["title"] + " " + offer["company"])
+    for word in wishes.get("avoid") or []:
+        word = candidate.normalize(word)
+        if word and re.search(r"\b%s\b" % re.escape(word), seen):
+            found.append(("unikane słowo", None))
+            break
     if wishes.get("no_salary") is False and not offer.get("salary_max"):
-        found.append(("brak widełek", True))
+        found.append(("brak widełek", PENALTY["no_salary"]))
     least = wishes.get("salary_min")
     if least and offer.get("salary_max") and \
             offer.get("currency") in RATES:
         pay = offer["salary_max"] * RATES[offer["currency"]]
         if pay < least:
-            found.append(("wynagrodzenie", pay >= least * (1 - EXCEPTION_PAY)))
+            short = (least - pay) / least
+            found.append(("wynagrodzenie do %s PLN" % format(
+                round(pay, -2), ",.0f").replace(",", " "), min(
+                    PENALTY["salary_max"], round(short * 100))))
     contracts = wishes.get("contracts") or []
     if contracts and offer["contracts"] and \
             not set(offer["contracts"]) & set(contracts):
         names = dict(CONTRACTS)
         found.append(("umowa: " + ", ".join(
-            names.get(c, c) for c in offer["contracts"]), True))
+            names.get(c, c) for c in offer["contracts"]), PENALTY["contract"]))
     levels = wishes.get("levels") or []
-    if levels and offer["level"] and offer["level"] not in levels:
-        found.append(("poziom: " + dict(LEVELS).get(offer["level"],
-                                                     offer["level"]), True))
-    seen = candidate.normalize(offer["title"] + " " + offer["company"])
-    for word in wishes.get("avoid") or []:
-        word = candidate.normalize(word)
-        if word and re.search(r"\b%s\b" % re.escape(word), seen):
-            found.append(("unikane słowo", False))
-            break
+    if levels and offer["level"] in LEVEL_ORDER and offer["level"] not in levels:
+        steps = min(abs(LEVEL_ORDER.index(offer["level"]) -
+                        LEVEL_ORDER.index(l)) for l in levels)
+        found.append(("poziom: " + dict(LEVELS)[offer["level"]],
+                      PENALTY["level"] if steps == 1 else PENALTY["levels"]))
     return found
 
 
+def judge(offer, wishes, near=None):
+    """(ruled out, the points unmet wishes cost, [(reason, points)]): an
+    offer is ruled out by a wish that rules out (place, way of working,
+    words to avoid), or by any unmet one if the user turned weighing off
+    (`flexible`)."""
+    found = reasons(offer, wishes, near)
+    flexible = wishes.get("flexible") is not False
+    out = any(points is None or not flexible for _, points in found)
+    unmet = [(reason, points) for reason, points in found
+             if points is not None]
+    return out, sum(points for _, points in unmet), unmet
+
+
 def rule_out(offer, wishes, near=None):
-    """Why the offer doesn't do (the first reason), or None."""
+    """Why the offer is ruled out (the first reason), or None."""
     found = reasons(offer, wishes, near)
-    return found[0][0] if found else None
-
-
-def exception(offer, wishes, near, score):
-    """The one criterion an offer breaks that may be overlooked, when the
-    user allows exceptions and it looks exceptionally good (`score`, its
-    prescore, at least EXCEPTION_PRESCORE); else None."""
-    if wishes.get("exceptions") is False or score < EXCEPTION_PRESCORE:
-        return None
-    found = reasons(offer, wishes, near)
-    if len(found) == 1 and found[0][1]:
-        return found[0][0]
-    return None
+    flexible = wishes.get("flexible") is not False
+    return next((reason for reason, points in found
+                 if points is None or not flexible), None)
 
 
 def skill_names(profile, wishes):

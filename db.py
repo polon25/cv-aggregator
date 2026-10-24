@@ -30,8 +30,8 @@
                 program (`prescore`), what a model made of it (`review`,
                 with `score` 0..100; `wanted`: the user asked for it,
                 `extra`: it was, so it doesn't count in the day's number),
-                the criterion it breaks if it's kept as an exception
-                (`outside`, see matching.exception),
+                the user's wishes it doesn't meet (`unmet`, JSON) and the
+                points they cost (`penalty`, see matching.judge),
                 and the user's mark: new, interested, applied or rejected
 """
 
@@ -138,7 +138,8 @@ CREATE TABLE IF NOT EXISTS matches (
     status TEXT NOT NULL DEFAULT 'new',  -- new, interested, applied, rejected
     wanted INTEGER NOT NULL DEFAULT 0,   -- the user asked for a review
     extra INTEGER NOT NULL DEFAULT 0,    -- reviewed as asked: not counted
-    outside TEXT,                        -- the criterion an exception breaks
+    unmet TEXT,                          -- JSON: [[wish not met, points]]
+    penalty INTEGER NOT NULL DEFAULT 0,  -- points they cost
     score INTEGER,                       -- 0..100 by the model
     review TEXT,                         -- JSON, see agents.review_offer
     review_error TEXT,
@@ -155,7 +156,8 @@ ADDED_COLUMNS = (
     ("profiles", "offers_wanted", "INTEGER NOT NULL DEFAULT 0"),
     ("profiles", "wishes_at", "REAL"),
     ("matches", "extra", "INTEGER NOT NULL DEFAULT 0"),
-    ("matches", "outside", "TEXT"),
+    ("matches", "unmet", "TEXT"),
+    ("matches", "penalty", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 USERNAME_RE = re.compile(r"[\w.\-]{3,32}")
@@ -198,6 +200,12 @@ def init():
                     # profile's last change
                     conn.execute("UPDATE profiles SET wishes_at = updated_at "
                                  "WHERE wishes IS NOT NULL")
+                if column == "unmet":
+                    # ratings from before unmet wishes cost points: the
+                    # model weighed them itself, they're rated anew
+                    conn.execute("UPDATE profiles SET wishes_at = ?, "
+                                 "offers_wanted = 1 WHERE wishes IS NOT "
+                                 "NULL", (time.time(),))
         conn.execute("UPDATE cvs SET status = 'pending' "
                      "WHERE status = 'working'")
         conn.execute("UPDATE profiles SET analysis_status = 'pending' "
@@ -723,27 +731,29 @@ def matched_ids(conn, user_id):
 
 
 def add_matches(conn, user_id, scored):
-    """[(offer id, prescore, the criterion it breaks or None)] kept for
-    the user."""
+    """[(offer id, prescore, [(wish not met, points)], their points)]
+    kept for the user."""
     now = time.time()
     with conn:
         conn.executemany(
             "INSERT OR IGNORE INTO matches (user_id, offer_id, created_at, "
-            "prescore, outside) VALUES (?, ?, ?, ?, ?)",
-            [(user_id, offer_id, now, score, outside)
-             for offer_id, score, outside in scored])
+            "prescore, unmet, penalty) VALUES (?, ?, ?, ?, ?, ?)",
+            [(user_id, offer_id, now, score,
+              json.dumps(unmet, ensure_ascii=False), penalty)
+             for offer_id, score, unmet, penalty in scored])
 
 
 def _match_row(row):
     row = _offer_row(row)
     for key in ("review", "model"):
         row[key] = json.loads(row[key]) if row.get(key) else None
+    row["unmet"] = json.loads(row["unmet"]) if row.get("unmet") else []
     return row
 
 
 MATCH_COLUMNS = (
     "m.offer_id, m.created_at, m.prescore, m.status, m.wanted, m.extra, "
-    "m.outside, m.score, "
+    "m.unmet, m.penalty, m.score, "
     "m.review, m.review_error, m.model, m.reviewed_at, o.portal, o.url, "
     "o.data, o.first_seen, o.last_seen")
 
@@ -763,15 +773,12 @@ def get_match(conn, user_id, offer_id):
     return _match_row(row) if row else None
 
 
-def reviews_since(conn, user_id, since, exceptions=False):
+def reviews_since(conn, user_id, since):
     """How many offers a model rated for the user since `since` (the
-    ones the user asked for aside); with `exceptions`, only the offers
-    kept as exceptions."""
+    ones the user asked for aside)."""
     return conn.execute(
         "SELECT COUNT(*) AS n FROM matches WHERE user_id = ? AND "
-        "reviewed_at >= ? AND extra = 0" +
-        (" AND outside IS NOT NULL" if exceptions else ""),
-        (user_id, since)).fetchone()["n"]
+        "reviewed_at >= ? AND extra = 0", (user_id, since)).fetchone()["n"]
 
 
 TO_RATE = ("m.wanted = 0 AND (m.reviewed_at IS NULL OR m.reviewed_at < ?) "
@@ -786,16 +793,14 @@ def wanted_reviews(conn, user_id):
         "m.user_id = ? AND m.wanted = 1" % MATCH_COLUMNS, (user_id,))]
 
 
-def to_review(conn, user_id, since, limit, wishes_at, exceptions=False):
+def to_review(conn, user_id, since, limit, wishes_at):
     """The most promising of the user's offers not rated since the wishes
     last changed (`wishes_at`), seen on their portal since `since`, at
-    most `limit`: the ones fitting every criterion, or, with
-    `exceptions`, the ones kept as exceptions."""
+    most `limit`."""
     return [_match_row(r) for r in conn.execute(
         "SELECT %s FROM matches m JOIN offers o ON o.id = m.offer_id WHERE "
-        "m.user_id = ? AND %s AND m.outside IS %s NULL ORDER BY m.prescore "
-        "DESC LIMIT ?" % (MATCH_COLUMNS, TO_RATE,
-                          "NOT" if exceptions else ""),
+        "m.user_id = ? AND %s ORDER BY m.prescore DESC LIMIT ?"
+        % (MATCH_COLUMNS, TO_RATE),
         (user_id, wishes_at or 0, since, max(0, limit)))]
 
 
@@ -804,8 +809,8 @@ def want_more(conn, user_id, count, since, wishes_at):
     take them); returns how many."""
     ids = [r["offer_id"] for r in conn.execute(
         "SELECT m.offer_id FROM matches m JOIN offers o ON o.id = m.offer_id "
-        "WHERE m.user_id = ? AND %s AND m.outside IS NULL ORDER BY "
-        "m.prescore DESC LIMIT ?" % TO_RATE,
+        "WHERE m.user_id = ? AND %s ORDER BY m.prescore DESC LIMIT ?"
+        % TO_RATE,
         (user_id, wishes_at or 0, since, count))]
     with conn:
         conn.executemany("UPDATE matches SET wanted = 1 WHERE user_id = ? "
@@ -862,12 +867,13 @@ def drop_matches(conn, user_id, offer_ids):
 
 
 def rescore_matches(conn, user_id, scored):
-    """[(offer id, prescore, the criterion it breaks or None)]."""
+    """[(offer id, prescore, [(wish not met, points)], their points)]."""
     with conn:
-        conn.executemany("UPDATE matches SET prescore = ?, outside = ? WHERE "
-                         "user_id = ? AND offer_id = ?",
-                         [(score, outside, user_id, i)
-                          for i, score, outside in scored])
+        conn.executemany(
+            "UPDATE matches SET prescore = ?, unmet = ?, penalty = ? WHERE "
+            "user_id = ? AND offer_id = ?",
+            [(score, json.dumps(unmet, ensure_ascii=False), penalty,
+              user_id, i) for i, score, unmet, penalty in scored])
 
 
 def users_wanting_reviews(conn):
