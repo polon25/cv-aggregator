@@ -104,7 +104,7 @@ OFFERS_INTERVAL = float(os.getenv("OFFERS_INTERVAL") or "6")
 PORTAL_DELAY = float(os.getenv("PORTAL_DELAY") or "3")
 # Search terms a user's wishes give at most (each is searched on every
 # portal).
-OFFERS_MAX_TERMS = int(os.getenv("OFFERS_MAX_TERMS") or "8")
+OFFERS_MAX_TERMS = int(os.getenv("OFFERS_MAX_TERMS") or "12")
 # Offers a model rates for a user a day, unless the user sets their own.
 OFFERS_DAILY_REVIEWS = int(os.getenv("OFFERS_DAILY_REVIEWS") or "30")
 # The most a user may set.

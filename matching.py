@@ -5,7 +5,8 @@ worked out by the program alone, before any model reads an offer:
                 roles, or, while they've written none, what the analysis
                 suggested
     rule_out()  why an offer is no good whatever a model would think of
-                it: the wrong place, too little pay (or none given, if the
+                it: the wrong place (farther than the user's distance from
+                their cities), too little pay (or none given, if the
                 user wants it given), the wrong contract or level, a word
                 the user wants to avoid (None: it may do)
     prescore()  0..1, how promising an offer looks: its title against the
@@ -34,6 +35,10 @@ MAX_ENTRIES = 20
 MAX_ENTRY = 80
 # Rough złoty rates, for pay in other currencies against the user's least.
 RATES = {"PLN": 1, "EUR": 4.3, "USD": 4.0, "GBP": 5.0, "CHF": 4.5}
+# Kilometres from the user's cities within which offers do, unless they
+# set their own; and the most they may.
+DISTANCE = 30
+MAX_DISTANCE = 300
 # Offers scoring less than this aren't kept for the user at all.
 MIN_PRESCORE = 0.15
 
@@ -41,7 +46,8 @@ MIN_PRESCORE = 0.15
 def empty():
     return {"roles": [], "keywords": [], "cities": [], "avoid": [],
             "modes": [], "contracts": [], "levels": [], "portals": [],
-            "salary_min": None, "no_salary": True}
+            "salary_min": None, "no_salary": True,
+            "distance": DISTANCE}
 
 
 def clean(raw):
@@ -64,6 +70,11 @@ def clean(raw):
         wishes["salary_min"] = None
     # offers that don't say what they pay are shown unless turned off
     wishes["no_salary"] = raw.get("no_salary") is not False
+    try:
+        distance = int(float(str(raw.get("distance")).replace(",", ".")))
+        wishes["distance"] = max(0, min(MAX_DISTANCE, distance))
+    except ValueError:
+        wishes["distance"] = DISTANCE
     return wishes
 
 
@@ -80,7 +91,7 @@ def describe(wishes, text=""):
     lines = []
     for key, label in (("roles", "Stanowiska / czym chce się zajmować"),
                        ("keywords", "Słowa kluczowe"),
-                       ("cities", "Miejscowości"),
+                       ("cities", "Miejscowości (z okolicą)"),
                        ("avoid", "Unika")):
         if wishes.get(key):
             lines.append("%s: %s" % (label, ", ".join(wishes[key])))
@@ -89,6 +100,9 @@ def describe(wishes, text=""):
         if wishes.get(key):
             lines.append("%s: %s" % (label, ", ".join(
                 names[key][k] for k in wishes[key])))
+    if wishes.get("cities") and wishes.get("distance"):
+        lines.append("Odległość od tych miejscowości: do %d km"
+                     % wishes["distance"])
     if wishes.get("salary_min"):
         lines.append("Wynagrodzenie co najmniej: %d PLN miesięcznie"
                      % wishes["salary_min"])
@@ -101,10 +115,11 @@ def describe(wishes, text=""):
 
 def terms(wishes, analysis):
     """What to search the portals for, at most OFFERS_MAX_TERMS: the
-    user's keywords, then roles; with neither, the roles and keywords of
-    the analysis' best career paths."""
-    found = list(wishes.get("keywords") or []) + list(wishes.get("roles")
-                                                     or [])
+    user's keywords and roles, by turns (the first of each first); with
+    neither, the roles and keywords of the analysis' best career paths."""
+    keywords, roles = wishes.get("keywords") or [], wishes.get("roles") or []
+    found = [term for pair in zip(keywords, roles) for term in pair] + \
+        keywords[len(roles):] + roles[len(keywords):]
     if not found and analysis:
         paths = sorted(analysis.get("career_paths") or [],
                        key=lambda p: {"wysokie": 0, "średnie": 1}.get(
@@ -134,16 +149,20 @@ def _city(city):
     return CITY_NAMES.get(name, name)
 
 
-def rule_out(offer, wishes):
-    """Why the offer doesn't do (a short reason in Polish), or None."""
+def rule_out(offer, wishes, near=None):
+    """Why the offer doesn't do (a short reason in Polish), or None.
+    `near`: whether any of the offer's places is near enough to the user's
+    cities (None: not known, the cities' names are compared)."""
     modes = wishes.get("modes") or []
     if modes and offer["mode"] and offer["mode"] not in modes:
         return "tryb pracy"
     cities = {_city(c) for c in wishes.get("cities") or []}
     remote_ok = offer["mode"] == "remote" and (not modes or "remote" in modes)
-    if cities and offer["cities"] and not remote_ok and \
-            not any(_city(c) in cities for c in offer["cities"]):
-        return "miejscowość"
+    if cities and offer["cities"] and not remote_ok:
+        if near is None:
+            near = any(_city(c) in cities for c in offer["cities"])
+        if not near:
+            return "miejscowość"
     if wishes.get("no_salary") is False and not offer.get("salary_max"):
         return "brak widełek"
     least = wishes.get("salary_min")

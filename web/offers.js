@@ -6,8 +6,8 @@
 
 const OFFERS_POLL_MS = 4000;
 const TABS = [
-  ["best", "Polecane", (m) => m.status === "new" && m.score !== null],
-  ["todo", "Do oceny", (m) => m.status === "new" && m.score === null],
+  ["best", "Polecane", (m) => m.status === "new" && m.score !== null && !m.stale],
+  ["todo", "Do oceny", (m) => m.status === "new" && (m.score === null || m.stale)],
   ["interested", "Interesujące", (m) => m.status === "interested"],
   ["applied", "Aplikowane", (m) => m.status === "applied"],
   ["rejected", "Odrzucone", (m) => m.status === "rejected"],
@@ -117,7 +117,9 @@ class OffersView {
           onclick: () => this.act("offers/search"),
         }, "Szukaj teraz")),
       el("p", { class: "search-state" }, state, " ",
-        el("span", { class: "muted" }, "Ocenione dziś: " + d.daily.used + " z " + d.daily.limit + ".")),
+        el("span", { class: "muted", title: "Limit zmienisz w Ustawieniach. Po zmianie „Czego szukam” liczy się od nowa." },
+          (d.daily.renewed ? "Ocenione od zmiany preferencji: " : "Ocenione dziś: ") +
+          d.daily.used + " z " + d.daily.limit + ".")),
       d.terms.length > 0 && el("p", { class: "muted small" }, "Szukane frazy: ",
         d.terms.map((t, i) => [i > 0 && ", ", el("b", {}, t)])),
       !me.has_key && el("p", { class: "hint warn" }, "⚠ Bez klucza API oferty nie będą oceniane: podaj go w Ustawieniach."),
@@ -140,6 +142,8 @@ class OffersView {
     const roles = lines("w-roles", w.roles, 4, "np. Inżynier oprogramowania C++\nEmbedded developer");
     const keywords = lines("w-keywords", w.keywords, 4, "np. C++\nLabVIEW\nsystemy pomiarowe");
     const cities = commas("w-cities", w.cities, "np. Warszawa, Kraków");
+    const distance = el("input", { type: "number", id: "w-distance", min: 0, max: 300, step: 5,
+                                   value: w.distance === undefined ? 30 : w.distance });
     const avoid = commas("w-avoid", w.avoid, "np. sprzedaż, call center");
     const salary = el("input", { type: "number", id: "w-salary", min: 0, step: 500, placeholder: "np. 12000",
                                  value: w.salary_min || "" });
@@ -186,12 +190,13 @@ class OffersView {
               cities: split(cities.value, ","), avoid: split(avoid.value, ","),
               modes: modes.get(), contracts: contracts.get(), levels: levels.get(),
               portals: chosen.length === c.portals.length ? [] : chosen, salary_min: salary.value,
-              no_salary: noSalary.checked,
+              no_salary: noSalary.checked, distance: distance.value,
             },
           });
           this.editing = false;
           this.update(data);
-          this.wishesPanel.querySelector(".saved-note").textContent = "Zapisano – oferty zostaną wyszukane od nowa.";
+          this.wishesPanel.querySelector(".saved-note").textContent = "Zapisano – oferty zostaną wyszukane " +
+            "i ocenione od nowa.";
         } catch (err) {
           error.textContent = err.message;
         } finally {
@@ -212,7 +217,10 @@ class OffersView {
         el("div", {}, el("label", { for: "w-roles" }, "Stanowiska / czym chcesz się zajmować"), roles),
         el("div", {}, el("label", { for: "w-keywords" }, "Słowa kluczowe (technologie, dziedziny)"), keywords)),
       el("div", { class: "two" },
-        el("div", {}, el("label", { for: "w-cities" }, "Miejscowości"), cities),
+        el("div", {}, el("label", { for: "w-cities" }, "Miejscowości"), cities,
+          el("div", { class: "distance" }, el("label", { for: "w-distance" }, "z okolicą do"), distance,
+            el("span", {}, "km"),
+            el("span", { class: "muted small" }, "(0 – tylko te miejscowości; oferty zdalne zawsze przechodzą)"))),
         el("div", {}, el("label", { for: "w-salary" }, "Wynagrodzenie co najmniej (PLN miesięcznie)"), salary,
           el("label", { class: "check no-salary" }, noSalary, "Pokazuj oferty bez podanych widełek"))),
       el("div", { class: "two" },
@@ -236,6 +244,7 @@ class OffersView {
     const tabs = TABS.map(([key, label, test]) => [key, label, all.filter(test)]);
     const [, , shown] = tabs.find(([key]) => key === this.tab);
     if (this.tab === "todo") shown.sort((a, b) => (b.wanted - a.wanted) || (b.prescore - a.prescore));
+    if (this.tab === "best") shown.sort((a, b) => b.score - a.score);
     const empty = {
       best: all.length ? "Nie ma jeszcze ocenionych ofert – zajrzyj do „Do oceny”."
         : this.data.terms.length ? "Nie ma jeszcze ofert: wyszukiwanie trwa albo nic nie pasowało."
@@ -250,9 +259,15 @@ class OffersView {
         type: "button", class: key === this.tab ? "active" : "",
         onclick: () => { this.tab = key; this.renderList(); },
       }, label, el("span", { class: "count" }, items.length)))),
-      this.tab === "todo" && shown.length > 0 && el("p", { class: "hint" },
-        "Oferty, które przeszły sito programu, a których model jeszcze nie ocenił – najbardziej obiecujące " +
-        "są oceniane same, do dziennego limitu. „Oceń” zleca ocenę od razu."),
+      this.tab === "todo" && shown.length > 0 && el("div", { class: "notice todo-head" },
+        el("p", { class: "hint" }, "Oferty, które przeszły sito programu, a których model jeszcze nie ocenił (albo " +
+          "ocenił przed zmianą preferencji) – najbardziej obiecujące są oceniane same, do dziennego limitu. " +
+          "„Oceń” zleca ocenę od razu, poza limitem."),
+        el("button", {
+          class: "btn small primary", type: "button",
+          disabled: shown.every((m) => m.wanted) || this.data.status,
+          onclick: () => this.act("offers/more"),
+        }, "Oceń " + this.data.more + " kolejnych")),
       shown.length ? el("div", { class: "offer-list" }, shown.map((m) => this.card(m)))
         : el("p", { class: "muted empty-list" }, empty));
   }
@@ -272,7 +287,8 @@ class OffersView {
     }, label);
     return el("article", { class: "panel offer" + (m.status === "rejected" ? " dim" : "") },
       el("div", { class: "offer-top" },
-        el("div", { class: "score " + scoreClass(m.score), title: m.score === null ? "Jeszcze nieoceniona" : "Ocena modelu" },
+        el("div", { class: "score " + (m.stale ? "none" : scoreClass(m.score)),
+                  title: m.score === null ? "Jeszcze nieoceniona" : m.stale ? "Ocena sprzed zmiany preferencji" : "Ocena modelu" },
           m.score === null ? "–" : m.score),
         el("div", { class: "offer-main" },
           el("a", { class: "offer-title", href: m.url, target: "_blank", rel: "noopener" }, m.title),
@@ -281,19 +297,20 @@ class OffersView {
             m.last_seen < this.data.fresh && el("span", { class: "warn-text" }, " · może być już nieaktualna")))),
       m.skills.length > 0 && el("div", { class: "tags small" }, m.skills.map((s) =>
         el("span", { class: "tag-chip" + (have.has(s) ? " have" : ""), title: have.has(s) ? "Masz tę umiejętność" : null }, s))),
-      r && el("p", { class: "offer-summary" }, r.summary),
+      m.stale && el("p", { class: "hint warn" }, "Ocena sprzed zmiany preferencji – zostanie powtórzona."),
+      r && el("p", { class: "offer-summary" + (m.stale ? " muted" : "") }, r.summary),
       r && (r.pros.length > 0 || r.cons.length > 0) && el("div", { class: "two pros-cons" },
         el("ul", { class: "pros" }, r.pros.map((p) => el("li", {}, p))),
         el("ul", { class: "cons" }, r.cons.map((p) => el("li", {}, p)))),
       m.review_error && el("p", { class: "bad small" }, "⚠ " + m.review_error),
-      m.wanted && m.score === null && el("p", { class: "thinking dots small" }, "Czeka na ocenę modelu"),
+      m.wanted && el("p", { class: "thinking dots small" }, "Czeka na ocenę modelu"),
       el("div", { class: "offer-actions" },
         mark("interested", "★ Interesuje mnie", "", "Zapisz w „Interesujące”"),
         mark("applied", "✓ Aplikuję", "", "Zapisz w „Aplikowane”"),
         mark("rejected", "✕ Odrzuć", "danger", "Schowaj w „Odrzucone”"),
-        m.score === null && !m.wanted && el("button", {
+        (m.score === null || m.stale) && !m.wanted && el("button", {
           class: "btn small", type: "button", onclick: () => this.act("offers/" + m.offer_id + "/review"),
-        }, "Oceń"),
+        }, m.stale ? "Oceń ponownie" : "Oceń"),
         el("span", { class: "muted small offer-dates" },
           (m.posted ? "dodana " + fmtTime(m.posted).slice(0, 10) : "znaleziona " + fmtTime(m.first_seen).slice(0, 10)) +
           (m.model ? " · oceniona przez " + m.model : ""))));

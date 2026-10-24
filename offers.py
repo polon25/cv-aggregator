@@ -6,13 +6,16 @@ offers weren't looked for in OFFERS_INTERVAL hours (or who asked for it):
    OFFERS_INTERVAL hours ago, for anyone, isn't asked again: offers are
    shared by all users;
 2. match: every offer seen lately that isn't ruled out by the user's wishes
-   (matching.rule_out) and looks promising enough (matching.prescore) is
-   kept for the user, once even when two portals list it; offers kept
-   earlier and not rated yet are judged again by the wishes as they are;
-3. review: a model rates the most promising ones (agents.review_offer),
-   with their full text fetched from the portal, as many a day as the
-   user allows (config.OFFERS_DAILY_REVIEWS or their own number), and any
-   the user asked to have rated.
+   (matching.rule_out; places within the user's distance of their cities,
+   by geo.py) and looks promising enough (matching.prescore) is kept for
+   the user, once even when two portals list it; offers kept earlier and
+   still unmarked are judged again by the wishes as they are (rated ones
+   that no longer do go too);
+3. review: a model rates the most promising ones not rated since the
+   wishes last changed (agents.review_offer), with their full text
+   fetched from the portal, as many a day as the user allows
+   (config.OFFERS_DAILY_REVIEWS or their own number; counted anew when
+   the wishes change), and any the user asked to have rated.
 
 status(user_id) says what's going on for a user, for their page.
 """
@@ -26,6 +29,7 @@ import agents
 import candidate
 import config
 import db
+import geo
 import llm
 import matching
 import portals
@@ -33,6 +37,8 @@ import portals
 log = logging.getLogger("offers")
 
 CHECK_SECONDS = 300
+# Places looked up on Nominatim at most per user and search.
+GEOCODE_BUDGET = 40
 _wake = threading.Event()
 _status = {}  # user id -> {state, done, total}
 _lock = threading.Lock()
@@ -130,20 +136,23 @@ def match(conn, user_id, profile, wishes, analysis):
                     key=lambda o: o["first_seen"])
     skills = matching.skill_names(profile, wishes)
     matches = {m["offer_id"]: m for m in db.user_matches(conn, user_id)}
+    near = _nearness(conn, wishes, offers + list(matches.values()))
     kept, gone, rescored = [], [], []
     for m in matches.values():
-        if m["status"] != "new" or m["reviewed_at"] or m["wanted"]:
+        if m["status"] != "new" or m["wanted"]:
             kept.append(m)
             continue
         score = matching.prescore(m, wishes, skills, analysis)
-        if matching.rule_out(m, wishes) or score < matching.MIN_PRESCORE:
+        if matching.rule_out(m, wishes, near(m)) or (
+                score < matching.MIN_PRESCORE and not m["reviewed_at"]):
             gone.append(m["offer_id"])
         else:
             kept.append(m)
             rescored.append((m["offer_id"], score))
     added = []
     for offer in offers:
-        if offer["id"] in matches or matching.rule_out(offer, wishes):
+        if offer["id"] in matches or \
+                matching.rule_out(offer, wishes, near(offer)):
             continue
         score = matching.prescore(offer, wishes, skills, analysis)
         if score < matching.MIN_PRESCORE or any(
@@ -159,9 +168,35 @@ def match(conn, user_id, profile, wishes, analysis):
     return len(added)
 
 
-def _midnight():
-    today = datetime.date.today()
-    return time.mktime(today.timetuple())
+def _nearness(conn, wishes, offers):
+    """near(offer): whether any of the offer's places is within the user's
+    distance of their cities; None when that isn't known (the cities'
+    names are compared then, see matching.rule_out). Places come from the
+    portal, else from the offer's cities' names (geo.locate)."""
+    if not wishes["cities"] or not wishes.get("distance"):
+        return lambda offer: None
+    centres = [p for p in geo.locate(conn, wishes["cities"],
+                                     len(wishes["cities"])).values() if p]
+    if not centres:
+        return lambda offer: None
+    unplaced = [c for o in offers if not o.get("points") for c in o["cities"]]
+    places = geo.locate(conn, unplaced, GEOCODE_BUDGET)
+
+    def near(offer):
+        points = [tuple(p) for p in offer.get("points") or []] or \
+            [places[c] for c in offer["cities"] if places.get(c)]
+        if not points:
+            return None
+        return any(geo.km(p, c) <= wishes["distance"]
+                   for p in points for c in centres)
+    return near
+
+
+def day_start(row):
+    """Since when ratings count in the day's number: midnight, or the
+    last change of what the user looks for, if later."""
+    midnight = time.mktime(datetime.date.today().timetuple())
+    return max(midnight, row["wishes_at"] or 0)
 
 
 def review(conn, user_id, profile, row):
@@ -171,9 +206,9 @@ def review(conn, user_id, profile, row):
                                   account["use_free"]):
         return
     left = db.daily_reviews(conn, user_id) - db.reviews_since(
-        conn, user_id, _midnight())
+        conn, user_id, day_start(row))
     since = time.time() - config.OFFER_DAYS * 86400
-    queue = db.to_review(conn, user_id, since, left)
+    queue = db.to_review(conn, user_id, since, left, row["wishes_at"])
     if not queue:
         return
     profile_text = candidate.text(profile, row["about"])

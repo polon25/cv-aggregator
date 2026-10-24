@@ -46,6 +46,8 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/offers/wishes    {wishes, goals}: what the user looks for;
                                offers are looked for again
     POST /api/offers/search    has offers looked for now
+    POST /api/offers/more      has the next MORE_REVIEWS offers rated
+                               (beyond the day's number)
     POST /api/offers/<id>/status
                                {status}: new, interested, applied, rejected
     POST /api/offers/<id>/review
@@ -187,6 +189,8 @@ def _profile_json(conn, user):
 
 
 MATCH_STATUSES = ("new", "interested", "applied", "rejected")
+# Offers "Oceń kolejne" has rated.
+MORE_REVIEWS = 10
 MATCH_FIELDS = ("offer_id", "portal", "url", "title", "company", "cities",
                 "mode", "salary_min", "salary_max", "currency", "contracts",
                 "level", "skills", "nice", "posted", "first_seen",
@@ -201,11 +205,13 @@ def _offers_json(conn, user):
     for m in db.user_matches(conn, user["id"]):
         item = {k: m.get(k) for k in MATCH_FIELDS}
         item["wanted"] = bool(m["wanted"])
+        # rated before what the user looks for last changed
+        item["stale"] = bool(m["reviewed_at"] and row["wishes_at"] and
+                             m["reviewed_at"] < row["wishes_at"])
         item["model"] = (m["model"] or {}).get("model")
         item["have"] = [s for s in m["skills"]
                         if candidate.normalize(s) in skills]
         matches.append(item)
-    midnight = offers._midnight()
     paths = (row["analysis"] or {}).get("career_paths") or []
     return {
         "wishes": row["wishes"], "goals": row["goals"],
@@ -218,7 +224,11 @@ def _offers_json(conn, user):
         "offers_at": row["offers_at"], "wanted": bool(row["offers_wanted"]),
         "interval": config.OFFERS_INTERVAL,
         "daily": {"limit": db.daily_reviews(conn, user["id"]),
-                  "used": db.reviews_since(conn, user["id"], midnight)},
+                  "used": db.reviews_since(conn, user["id"],
+                                           offers.day_start(row)),
+                  "renewed": bool(row["wishes_at"]) and
+                  offers.day_start(row) == row["wishes_at"]},
+        "more": MORE_REVIEWS,
         "fresh": time.time() - 2 * 86400,
         "matches": matches,
     }
@@ -456,6 +466,15 @@ class Handler(SimpleHTTPRequestHandler):
             db.want_offers(conn, user["id"])
             offers.wake()
             return _offers_json(conn, user)
+        if action == "more":
+            self._can_review(conn, user)
+            row = db.get_profile(conn, user["id"])
+            if not db.want_more(conn, user["id"], MORE_REVIEWS,
+                                time.time() - config.OFFER_DAYS * 86400,
+                                row["wishes_at"]):
+                raise db.Error("Nie ma ofert czekających na ocenę.")
+            offers.wake()
+            return _offers_json(conn, user)
         m = re.fullmatch(r"(\d+)/(status|review)", action)
         if not m or not db.get_match(conn, user["id"], int(m.group(1))):
             raise HttpError(404, "Nie ma takiej oferty.")
@@ -465,14 +484,17 @@ class Handler(SimpleHTTPRequestHandler):
                 raise HttpError(400, "Nieprawidłowy stan.")
             db.set_match_status(conn, user["id"], offer_id, body["status"])
         else:
-            account = db.account(conn, user["id"])
-            if not account["key"]:
-                raise db.Error(worker.NO_KEY)
-            if not (account["use_paid"] or account["use_free"]):
-                raise db.Error(worker.NO_MODELS)
+            self._can_review(conn, user)
             db.want_review(conn, user["id"], offer_id)
             offers.wake()
         return _offers_json(conn, user)
+
+    def _can_review(self, conn, user):
+        account = db.account(conn, user["id"])
+        if not account["key"]:
+            raise db.Error(worker.NO_KEY)
+        if not (account["use_paid"] or account["use_free"]):
+            raise db.Error(worker.NO_MODELS)
 
     # --- CVs ------------------------------------------------------------
 

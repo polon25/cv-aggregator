@@ -22,7 +22,8 @@ An offer, as every portal's is made to look:
     (remote, hybrid, office or ""), salary_min, salary_max, currency (a
     month's pay; None when not given), contracts (uop, b2b, other), level
     (intern, junior, mid, senior, lead or ""), skills, nice (skills nice
-    to have), posted (epoch seconds or None)}
+    to have), posted (epoch seconds or None), points (the [lat, lon] of
+    its places, when the portal gives them)}
 """
 
 import datetime
@@ -207,6 +208,10 @@ def _justjoin(offer, site):
     first = pay[0] if pay else {}
     cities = [offer.get("city")] + [m.get("city") for m in
                                     offer.get("multilocation") or []]
+    points = [[m["latitude"], m["longitude"]] for m in
+              [offer] + (offer.get("multilocation") or [])
+              if isinstance(m.get("latitude"), (int, float)) and
+              isinstance(m.get("longitude"), (int, float))]
     url = ("https://justjoin.it/job-offer/" if site == "justjoin" else
            "https://rocketjobs.pl/oferta-pracy/") + offer["slug"]
     return {
@@ -226,6 +231,7 @@ def _justjoin(offer, site):
         "skills": offer.get("requiredSkills") or [],
         "nice": offer.get("niceToHaveSkills") or [],
         "posted": _epoch(offer.get("publishedAt")),
+        "points": [list(p) for p in dict.fromkeys(map(tuple, points))],
     }
 
 
@@ -241,6 +247,10 @@ def _nofluffjobs(p):
     location = p.get("location") or {}
     places = [pl.get("city") for pl in location.get("places") or []
               if pl.get("city") and pl.get("city") != "Remote"]
+    points = [[pl["geoLocation"]["latitude"], pl["geoLocation"]["longitude"]]
+              for pl in location.get("places") or []
+              if isinstance(pl.get("geoLocation"), dict) and
+              isinstance(pl["geoLocation"].get("latitude"), (int, float))]
     salary = p.get("salary") or {}
     tiles = (p.get("tiles") or {}).get("values") or []
     mode = "remote" if location.get("fullyRemote") else \
@@ -262,6 +272,7 @@ def _nofluffjobs(p):
         "skills": [t["value"] for t in tiles if t.get("type") == "requirement"],
         "nice": [],
         "posted": _epoch(p.get("renewed") or p.get("posted")),
+        "points": points,
     }
 
 
@@ -298,7 +309,7 @@ def _bulldogjob(job):
         "contracts": contracts,
         "level": LEVELS.get(str(job.get("experienceLevel")).lower(), ""),
         "skills": job.get("technologyTags") or [], "nice": [],
-        "posted": None,
+        "posted": None, "points": [],
     }
 
 

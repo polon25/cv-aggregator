@@ -70,7 +70,7 @@ Settings (`.env`, see [.env.example](.env.example)):
 | `PORTALS` | all four | the portals searched, comma-separated: `justjoin`, `rocketjobs`, `nofluffjobs`, `bulldogjob` |
 | `OFFERS_INTERVAL` | 6 | hours between searches for a user (a portal searched for a term less than this ago, for anyone, isn't asked again) |
 | `PORTAL_DELAY` | 3 | seconds at least between two requests to the same portal |
-| `OFFERS_MAX_TERMS` | 8 | search terms a user's wishes give at most |
+| `OFFERS_MAX_TERMS` | 12 | search terms a user's wishes give at most |
 | `OFFERS_DAILY_REVIEWS` | 30 | offers a model rates for a user a day, until they set their own number in the settings |
 | `OFFERS_MAX_REVIEWS` | 200 | the most a user may set |
 | `OFFER_DAYS` | 7 | an offer not seen on its portal for this long is taken as gone (and forgotten after twice that, unless marked) |
@@ -154,11 +154,17 @@ weren't looked for in `OFFERS_INTERVAL` hours, or who asked ("Szukaj
 teraz", or saving "Czego szukam"):
 
 1. **Searching** ([portals.py](portals.py)): every chosen portal is
-   searched for every term – the user's keywords and roles, or, until they
-   write any, those of the analysis' best career paths. Results are shared
+   searched for every term – the user's keywords and roles by turns (at
+   most `OFFERS_MAX_TERMS`), or, until they write any, those of the
+   analysis' best career paths. Results are shared
    by all users: a portal searched for a term lately isn't asked again.
 2. **Sifting** ([matching.py](matching.py), no model): an offer is ruled
-   out by the wrong way of working or city (remote offers pass anywhere),
+   out by the wrong way of working or place – farther than the user's
+   distance (30 km unless they set another; 0: the very cities) from
+   their cities, by the coordinates the portal gives or, without them,
+   its cities' (from OpenStreetMap's Nominatim, [geo.py](geo.py), a
+   request a second at most, each place asked about once); remote offers
+   pass anywhere –
    pay whose top is below the user's least (other currencies roughly in
    złoty), no pay given if the user wants only offers that give it (they
    pass by default), the wrong contract or level, or a word to avoid in its title or
@@ -167,11 +173,14 @@ teraz", or saving "Czego szukam"):
    has, whatever the inflection), the share of the offer's skills the
    candidate has, keywords in the title. Promising ones are kept for the
    user, once even when two portals list the same job; ones kept earlier
-   and not rated are judged again by the wishes as they are.
-3. **Rating** ([agents.py](agents.py), a model): the most promising, with
-   their full text from the portal, get a score 0–100, a summary, what
-   fits and what doesn't – up to the user's number a day, plus any they
-   asked for ("Oceń"). The candidate's profile is the system prompt, the
+   and not marked are judged again by the wishes as they are, rated ones
+   too.
+3. **Rating** ([agents.py](agents.py), a model): the most promising not
+   rated since the user last changed what they look for, with their full
+   text from the portal, get a score 0–100, a summary, what fits and what
+   doesn't – up to the user's number a day (counted anew when they change
+   what they look for), plus any they asked for ("Oceń", "Oceń 10
+   kolejnych"). The candidate's profile is the system prompt, the
    same for all their offers, so models that cache read it for a tenth.
 
 ## Portals
@@ -205,6 +214,7 @@ read in a later version.
 | `profiles` | the user's own description, what they look for (`wishes`, JSON, and `goals`, their words), their changes to the profile (JSON), the analysis (JSON) with its status, model, time and the fingerprint of the profile it was written from, when their offers were last looked for and whether they asked for it |
 | `offers` | offers found, shared by all users: portal, its id, URL, what the list said (JSON), first and last seen, the full text once fetched |
 | `searches` | when a portal was last searched for a term, how many offers it gave or what went wrong |
+| `places` | a town's coordinates (from Nominatim; none if not found) |
 | `matches` | an offer kept for a user: the program's score, the user's mark (`new`, `interested`, `applied`, `rejected`), whether they asked for a rating, the model's score and review (JSON), who wrote it and when |
 
 ### API
@@ -235,6 +245,7 @@ read in a later version.
 | `GET /api/offers` | what the user looks for and the form's choices, the terms searched, what's going on, the day's ratings, the offers kept with their reviews |
 | `POST /api/offers/wishes` | `{wishes, goals}`; offers are looked for again |
 | `POST /api/offers/search` | looks for offers now |
+| `POST /api/offers/more` | has the next 10 offers rated (not counted in the day's number) |
 | `POST /api/offers/<id>/status` | `{status}`: `new`, `interested`, `applied`, `rejected` |
 | `POST /api/offers/<id>/review` | has the offer rated now (not counted in the day's number) |
 

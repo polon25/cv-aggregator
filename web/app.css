@@ -331,6 +331,13 @@ label.toggle input:disabled + span { opacity: .55; }
 label.check { display: inline-flex; gap: .35rem; align-items: center; margin: 0; font-weight: 400; }
 label.check input { accent-color: var(--accent); }
 label.check.no-salary { margin-top: .5rem; }
+.distance { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-top: .5rem; }
+.distance label { margin: 0; font-weight: 400; }
+.distance input[type=number] { width: 5.5rem; padding: .3rem .5rem; }
+.todo-head { margin: .5rem 0 .9rem; flex-wrap: nowrap; }
+.todo-head .hint { margin: 0; }
+.todo-head .btn { flex: none; }
+@media (max-width: 700px) { .todo-head { flex-wrap: wrap; } }
 input[type=number] {
   width: 100%; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
 }
