@@ -143,6 +143,7 @@ class OffersView {
     const avoid = commas("w-avoid", w.avoid, "np. sprzedaż, call center");
     const salary = el("input", { type: "number", id: "w-salary", min: 0, step: 500, placeholder: "np. 12000",
                                  value: w.salary_min || "" });
+    const noSalary = el("input", { type: "checkbox", checked: w.no_salary !== false });
     const goals = el("textarea", { id: "w-goals", rows: 4, maxlength: 6000,
       placeholder: "Twoimi słowami: czym chcesz się zajmować, co jest dla ciebie ważne, czego chcesz uniknąć…" });
     goals.value = d.goals || "";
@@ -185,6 +186,7 @@ class OffersView {
               cities: split(cities.value, ","), avoid: split(avoid.value, ","),
               modes: modes.get(), contracts: contracts.get(), levels: levels.get(),
               portals: chosen.length === c.portals.length ? [] : chosen, salary_min: salary.value,
+              no_salary: noSalary.checked,
             },
           });
           this.editing = false;
@@ -211,7 +213,8 @@ class OffersView {
         el("div", {}, el("label", { for: "w-keywords" }, "Słowa kluczowe (technologie, dziedziny)"), keywords)),
       el("div", { class: "two" },
         el("div", {}, el("label", { for: "w-cities" }, "Miejscowości"), cities),
-        el("div", {}, el("label", { for: "w-salary" }, "Wynagrodzenie co najmniej (PLN miesięcznie)"), salary)),
+        el("div", {}, el("label", { for: "w-salary" }, "Wynagrodzenie co najmniej (PLN miesięcznie)"), salary,
+          el("label", { class: "check no-salary" }, noSalary, "Pokazuj oferty bez podanych widełek"))),
       el("div", { class: "two" },
         el("div", {}, el("label", {}, "Tryb pracy"), modes.node, el("label", {}, "Umowa"), contracts.node),
         el("div", {}, el("label", {}, "Poziom stanowiska"), levels.node)),

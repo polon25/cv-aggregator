@@ -330,6 +330,7 @@ label.toggle input:disabled + span { opacity: .55; }
 .check-grid { display: flex; flex-wrap: wrap; gap: .2rem 1rem; }
 label.check { display: inline-flex; gap: .35rem; align-items: center; margin: 0; font-weight: 400; }
 label.check input { accent-color: var(--accent); }
+label.check.no-salary { margin-top: .5rem; }
 input[type=number] {
   width: 100%; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
 }

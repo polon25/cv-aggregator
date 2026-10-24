@@ -160,7 +160,8 @@ teraz", or saving "Czego szukam"):
 2. **Sifting** ([matching.py](matching.py), no model): an offer is ruled
    out by the wrong way of working or city (remote offers pass anywhere),
    pay whose top is below the user's least (other currencies roughly in
-   złoty), the wrong contract or level, or a word to avoid in its title or
+   złoty), no pay given if the user wants only offers that give it (they
+   pass by default), the wrong contract or level, or a word to avoid in its title or
    company; offers no portal says otherwise of pass. The rest get a score
    0..1: the title against the roles sought (the share of their words it
    has, whatever the inflection), the share of the offer's skills the

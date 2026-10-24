@@ -5,8 +5,9 @@ worked out by the program alone, before any model reads an offer:
                 roles, or, while they've written none, what the analysis
                 suggested
     rule_out()  why an offer is no good whatever a model would think of
-                it: the wrong place, too little pay, the wrong contract or
-                level, a word the user wants to avoid (None: it may do)
+                it: the wrong place, too little pay (or none given, if the
+                user wants it given), the wrong contract or level, a word
+                the user wants to avoid (None: it may do)
     prescore()  0..1, how promising an offer looks: its title against the
                 roles sought, its skills against the candidate's
 
@@ -40,7 +41,7 @@ MIN_PRESCORE = 0.15
 def empty():
     return {"roles": [], "keywords": [], "cities": [], "avoid": [],
             "modes": [], "contracts": [], "levels": [], "portals": [],
-            "salary_min": None}
+            "salary_min": None, "no_salary": True}
 
 
 def clean(raw):
@@ -61,6 +62,8 @@ def clean(raw):
         wishes["salary_min"] = salary if 0 < salary < 10 ** 6 else None
     except ValueError:
         wishes["salary_min"] = None
+    # offers that don't say what they pay are shown unless turned off
+    wishes["no_salary"] = raw.get("no_salary") is not False
     return wishes
 
 
@@ -89,6 +92,8 @@ def describe(wishes, text=""):
     if wishes.get("salary_min"):
         lines.append("Wynagrodzenie co najmniej: %d PLN miesięcznie"
                      % wishes["salary_min"])
+    if wishes.get("no_salary") is False:
+        lines.append("Tylko oferty z podanym wynagrodzeniem")
     if text:
         lines.append(text)
     return "\n".join(lines)
@@ -139,6 +144,8 @@ def rule_out(offer, wishes):
     if cities and offer["cities"] and not remote_ok and \
             not any(_city(c) in cities for c in offer["cities"]):
         return "miejscowość"
+    if wishes.get("no_salary") is False and not offer.get("salary_max"):
+        return "brak widełek"
     least = wishes.get("salary_min")
     if least and offer.get("salary_max") and \
             offer.get("currency") in RATES and \
