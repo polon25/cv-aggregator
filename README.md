@@ -159,17 +159,19 @@ teraz", or saving "Czego szukam"):
    analysis' best career paths. Results are shared
    by all users: a portal searched for a term lately isn't asked again.
 2. **Sifting** ([matching.py](matching.py), no model): an offer is ruled
-   out by the wrong way of working or place – farther than the user's
-   distance (30 km unless they set another; 0: the very cities) from
-   their cities, by the coordinates the portal gives or, without them,
-   its cities' (from OpenStreetMap's Nominatim, [geo.py](geo.py), a
-   request a second at most, each place asked about once); remote offers
-   pass anywhere – or a word to avoid in its title or company. Other
-   wishes it doesn't meet cost points instead (`matching.PENALTY`, unless
-   the user wants them to rule out too): a level next to the ones sought
-   10, one farther 25, a contract not sought 15, no pay given when the
-   user wants it given 10, pay whose top is below the user's least a
-   point a percent short (other currencies roughly in złoty), 40 at most.
+   out by a contract the user didn't choose or a word to avoid in its
+   title or company. Other wishes it doesn't meet cost points instead
+   (unless the user wants them to rule out too): a place farther than the
+   user's distance (30 km unless they set another; 0: the very cities)
+   from their cities – by the coordinates the portal gives or, without
+   them, its cities' (from OpenStreetMap's Nominatim, [geo.py](geo.py), a
+   request a second at most, each place asked about once) – 5 for a
+   remote job, 20 for a hybrid one (or one that doesn't say), 40 for one
+   in the office; a way of working not chosen 5 (remote), 15 (hybrid), 25
+   (office); a level next to the ones sought 10, one farther 25; no pay
+   given when the user wants it given 10; pay whose top is below the
+   user's least a point a percent short (other currencies roughly in
+   złoty), 40 at most.
    What a portal doesn't say passes. The rest get a score 0..1: the title
    against the roles sought (the share of their words it has, whatever
    the inflection), the share of the offer's skills the candidate has,

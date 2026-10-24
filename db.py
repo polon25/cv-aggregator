@@ -210,6 +210,10 @@ def init():
                      "WHERE status = 'working'")
         conn.execute("UPDATE profiles SET analysis_status = 'pending' "
                      "WHERE analysis_status = 'working'")
+        # offers are judged again after a restart, by the program as it
+        # is now (no portal is asked again before its time)
+        conn.execute("UPDATE profiles SET offers_wanted = 1 WHERE wishes "
+                     "IS NOT NULL")
         # reviews asked for before `extra` was kept
         conn.execute("UPDATE matches SET extra = 1, wanted = 0 WHERE "
                      "wanted = 1 AND reviewed_at IS NOT NULL")

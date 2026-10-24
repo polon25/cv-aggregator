@@ -182,7 +182,7 @@ def _score(offer, wishes, skills, analysis, penalty):
 def _nearness(conn, wishes, offers):
     """near(offer): whether any of the offer's places is within the user's
     distance of their cities; None when that isn't known (the cities'
-    names are compared then, see matching.rule_out). Places come from the
+    names are compared then, see matching.reasons). Places come from the
     portal, else from the offer's cities' names (geo.locate)."""
     if not wishes["cities"] or not wishes.get("distance"):
         return lambda offer: None

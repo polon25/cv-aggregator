@@ -4,13 +4,14 @@ worked out by the program alone, before any model reads an offer:
     terms()     what to search the portals for: the user's keywords and
                 roles, or, while they've written none, what the analysis
                 suggested
-    judge()     what of the user's wishes an offer doesn't meet: the
+    judge()     what of the user's wishes an offer doesn't meet: a
+                contract not sought or a word to avoid rule it out; the
                 wrong place (farther than the user's distance from their
-                cities), way of working or a word to avoid rule it out;
-                too little pay (or none given, if the user wants it
-                given), the wrong contract or level cost points
-                (PENALTY), taken off its scores, the program's and the
-                model's (unless the user wants every wish to rule out)
+                cities; costing less the less one goes to the office),
+                way of working or level, too little pay (or none given,
+                if the user wants it given) cost points, taken off its
+                scores, the program's and the model's (unless the user
+                wants every wish to rule out)
     prescore()  0..1, how promising an offer looks: its title against the
                 roles sought, its skills against the candidate's
 
@@ -43,11 +44,16 @@ RATES = {"PLN": 1, "EUR": 4.3, "USD": 4.0, "GBP": 5.0, "CHF": 4.5}
 DISTANCE = 30
 MAX_DISTANCE = 300
 # Points (of a score 0..100) an offer loses for each wish it doesn't meet:
-# a level next to the ones sought, one farther, a contract not sought, not
-# saying what it pays when the user wants it said, and pay below the
-# least, a point a percent short, at most salary_max.
-PENALTY = {"level": 10, "levels": 25, "contract": 15, "no_salary": 10,
-           "salary_max": 40}
+# a level next to the ones sought, one farther, not saying what it pays
+# when the user wants it said, and pay below the least, a point a percent
+# short, at most salary_max.
+PENALTY = {"level": 10, "levels": 25, "no_salary": 10, "salary_max": 40}
+# A way of working the user didn't choose, by the offer's...
+MODE_PENALTY = {"remote": 5, "hybrid": 15, "office": 25}
+# ...and a place farther than their distance from their cities, by the
+# offer's way of working ("": not known): working from home, where the
+# office is matters little; going there every day, a lot.
+PLACE_PENALTY = {"remote": 5, "hybrid": 20, "office": 40, "": 20}
 # Rated offers scoring less than this (with what unmet wishes cost) are
 # shown only on request.
 WEAK_SCORE = 50
@@ -173,19 +179,27 @@ def reasons(offer, wishes, near=None):
     in Polish, the points it costs, or None when it rules the offer out
     whatever else)]. `near`: whether any of the offer's places is near
     enough to the user's cities (None: not known, the cities' names are
-    compared). Place, way of working and words to avoid rule an offer out;
-    the rest costs points (see PENALTY)."""
+    compared). A contract not sought and words to avoid rule an offer
+    out; the rest costs points (PENALTY, MODE_PENALTY, PLACE_PENALTY)."""
     found = []
+    contracts = wishes.get("contracts") or []
+    if contracts and offer["contracts"] and \
+            not set(offer["contracts"]) & set(contracts):
+        names = dict(CONTRACTS)
+        found.append(("umowa: " + ", ".join(
+            names.get(c, c) for c in offer["contracts"]), None))
     modes = wishes.get("modes") or []
     if modes and offer["mode"] and offer["mode"] not in modes:
-        found.append(("tryb pracy", None))
+        found.append(("tryb: " + dict(MODES)[offer["mode"]],
+                      MODE_PENALTY[offer["mode"]]))
     cities = {_city(c) for c in wishes.get("cities") or []}
-    remote_ok = offer["mode"] == "remote" and (not modes or "remote" in modes)
-    if cities and offer["cities"] and not remote_ok:
+    if cities and offer["cities"]:
         if near is None:
             near = any(_city(c) in cities for c in offer["cities"])
         if not near:
-            found.append(("miejscowość", None))
+            found.append(("miejsce: " + ", ".join(offer["cities"][:2]) + (
+                "…" if len(offer["cities"]) > 2 else ""),
+                PLACE_PENALTY[offer["mode"]]))
     seen = candidate.normalize(offer["title"] + " " + offer["company"])
     for word in wishes.get("avoid") or []:
         word = candidate.normalize(word)
@@ -203,12 +217,6 @@ def reasons(offer, wishes, near=None):
             found.append(("wynagrodzenie do %s PLN" % format(
                 round(pay, -2), ",.0f").replace(",", " "), min(
                     PENALTY["salary_max"], round(short * 100))))
-    contracts = wishes.get("contracts") or []
-    if contracts and offer["contracts"] and \
-            not set(offer["contracts"]) & set(contracts):
-        names = dict(CONTRACTS)
-        found.append(("umowa: " + ", ".join(
-            names.get(c, c) for c in offer["contracts"]), PENALTY["contract"]))
     levels = wishes.get("levels") or []
     if levels and offer["level"] in LEVEL_ORDER and offer["level"] not in levels:
         steps = min(abs(LEVEL_ORDER.index(offer["level"]) -
@@ -220,8 +228,8 @@ def reasons(offer, wishes, near=None):
 
 def judge(offer, wishes, near=None):
     """(ruled out, the points unmet wishes cost, [(reason, points)]): an
-    offer is ruled out by a wish that rules out (place, way of working,
-    words to avoid), or by any unmet one if the user turned weighing off
+    offer is ruled out by a wish that rules out (contract, words to
+    avoid), or by any unmet one if the user turned weighing off
     (`flexible`)."""
     found = reasons(offer, wishes, near)
     flexible = wishes.get("flexible") is not False

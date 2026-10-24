@@ -225,7 +225,7 @@ class OffersView {
         el("div", {}, el("label", { for: "w-cities" }, "Miejscowości"), cities,
           el("div", { class: "distance" }, el("label", { for: "w-distance" }, "z okolicą do"), distance,
             el("span", {}, "km"),
-            el("span", { class: "muted small" }, "(0 – tylko te miejscowości; oferty zdalne zawsze przechodzą)"))),
+            el("span", { class: "muted small" }, "(0 – tylko te miejscowości)"))),
         el("div", {}, el("label", { for: "w-salary" }, "Wynagrodzenie co najmniej (PLN miesięcznie)"), salary,
           el("label", { class: "check no-salary" }, noSalary, "Pokazuj oferty bez podanych widełek"))),
       el("div", { class: "two" },
@@ -234,10 +234,11 @@ class OffersView {
       el("label", { for: "w-avoid" }, "Unikaj ofert ze słowami (w tytule lub nazwie firmy)"), avoid,
       el("label", { class: "check flexible" }, flexible,
         el("span", {}, "Niespełnione oczekiwania obniżają ocenę zamiast odrzucać ofertę",
-          el("span", { class: "option-hint" }, "Poziom obok wybranych −10 pkt (dalszy −25), inna umowa −15, " +
-            "brak widełek −10, wynagrodzenie poniżej minimum −1 pkt za każdy brakujący procent (najwyżej −40). " +
-            "Miejsce, tryb pracy i unikane słowa zawsze odrzucają. Odznaczone: każde niespełnione oczekiwanie " +
-            "odrzuca ofertę."))),
+          el("span", { class: "option-hint" }, "Miejsce poza okolicą: praca zdalna −5 pkt, hybrydowa −20, " +
+            "stacjonarna −40. Niewybrany tryb pracy: zdalny −5, hybrydowy −15, stacjonarny −25. Poziom obok " +
+            "wybranych −10 (dalszy −25), brak widełek −10, wynagrodzenie poniżej minimum −1 za każdy brakujący " +
+            "procent (najwyżej −40). Inna umowa i unikane słowa zawsze odrzucają. Odznaczone: każde " +
+            "niespełnione oczekiwanie odrzuca ofertę."))),
       el("label", {}, "Portale"), portals.node,
       el("label", { for: "w-goals" }, "Czym chcesz się zajmować – twoimi słowami"), goals,
       el("div", { class: "row end" }, el("span", { class: "muted small saved-note" }), note, save),
