@@ -1,0 +1,17 @@
+# The project directory and User below are filled in on install;
+# see README, "Running at boot".
+[Unit]
+Description=CV Aggregator - a candidate profile from all their CVs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cv-aggregator
+WorkingDirectory=/opt/cv-aggregator
+ExecStart=/usr/bin/python3 -u /opt/cv-aggregator/app.py
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

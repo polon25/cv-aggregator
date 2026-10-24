@@ -1,0 +1,219 @@
+"use strict";
+// The user's settings: their OpenRouter API key (or the server's, when
+// they give none), their ladder of models, paid ones and free ones, in the
+// order the agents ask them, and whether the paid ones come first. Uses
+// the helpers of app.js (el, api) and its `me`.
+
+function dollars(amount) {
+  return amount.toFixed(2).replace(".", ",") + " USD";
+}
+
+// What a model costs, from OpenRouter's list (null: the list isn't known).
+function priceNote(model, catalogue) {
+  if (!catalogue) return "";
+  const known = catalogue.get(model);
+  if (!known) return "nie ma takiego modelu w OpenRouterze";
+  if (known.free) return "darmowy";
+  const price = (n) => n.toFixed(n < 1 ? 3 : 2).replace(/0+$/, "").replace(/\.$/, "").replace(".", ",");
+  return price(known.input) + " / " + price(known.output) + " USD za mln tokenów (wejście / wyjście)";
+}
+
+// One of the two lists: rows to move up, down and out, and a field to add
+// a model with OpenRouter's models as suggestions. Returns {node, get, set}.
+function modelList(id, title, hint, catalogue, suggest, max) {
+  let models = [];
+  const rows = el("ol", { class: "model-list" });
+  const input = el("input", { type: "text", list: id + "-models", maxlength: 100,
+                              placeholder: "nazwa modelu, np. " + (id === "paid" ? "~anthropic/claude-haiku-latest" : "google/gemma-4-31b-it:free"),
+                              "aria-label": "Model do dodania: " + title });
+  const options = el("datalist", { id: id + "-models" },
+    catalogue ? [...catalogue.values()].filter(suggest).map((m) =>
+      el("option", { value: m.id }, m.name + (m.free ? "" : " – " + priceNote(m.id, catalogue)))) : []);
+  const note = el("p", { class: "error", role: "alert" });
+  const render = () => {
+    rows.replaceChildren(...models.map((model, i) => {
+      const price = priceNote(model, catalogue);
+      const move = (to) => () => {
+        models.splice(to, 0, models.splice(i, 1)[0]);
+        render();
+      };
+      return el("li", {},
+        el("span", { class: "model-name" }, el("b", {}, model),
+          price && el("span", { class: "muted small" + (catalogue && !catalogue.get(model) ? " bad" : "") }, price)),
+        el("span", { class: "model-buttons" },
+          el("button", { type: "button", class: "icon-btn", disabled: i === 0, title: "Wyżej",
+                         "aria-label": "Przesuń wyżej: " + model, onclick: move(i - 1) }, "↑"),
+          el("button", { type: "button", class: "icon-btn", disabled: i === models.length - 1, title: "Niżej",
+                         "aria-label": "Przesuń niżej: " + model, onclick: move(i + 1) }, "↓"),
+          el("button", { type: "button", class: "icon-btn danger", title: "Usuń",
+                         "aria-label": "Usuń: " + model, onclick: () => { models.splice(i, 1); render(); } }, "✕")));
+    }));
+    if (!models.length) rows.append(el("li", { class: "muted empty" }, "(lista jest pusta)"));
+  };
+  const add = () => {
+    const model = input.value.trim();
+    note.textContent = "";
+    if (!model) return;
+    if (models.includes(model)) note.textContent = "Ten model już jest na liście.";
+    else if (models.length >= max) note.textContent = "Najwyżej " + max + " modeli na liście.";
+    else if (catalogue && !catalogue.get(model)) note.textContent = "OpenRouter nie ma modelu „" + model + "”.";
+    else if (catalogue && !suggest(catalogue.get(model))) {
+      note.textContent = id === "free" ? "Ten model jest płatny: dodaj go do listy płatnych."
+        : "Ten model jest darmowy: dodaj go do listy darmowych.";
+    } else {
+      models.push(model);
+      input.value = "";
+      render();
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); add(); }
+  });
+  return {
+    node: el("div", { class: "model-box" },
+      el("h4", {}, title), el("p", { class: "hint" }, hint), rows,
+      el("div", { class: "row" }, input, options,
+        el("button", { class: "btn small", type: "button", onclick: add }, "Dodaj")),
+      note),
+    get: () => models.slice(),
+    set: (list) => { models = list.slice(); note.textContent = ""; render(); },
+  };
+}
+
+async function settingsDialog() {
+  let settings, catalogue = null;
+  try {
+    settings = await api("GET", "settings");
+  } catch (e) {
+    return alert(e.message);
+  }
+  try {
+    const { models } = await api("GET", "models");
+    if (models.length) catalogue = new Map(models.map((m) => [m.id, m]));
+  } catch (e) { /* no suggestions or prices then */ }
+
+  // --- the key
+  const keyState = el("div", {});
+  const keyInput = el("input", { type: "password", id: "api-key", autocomplete: "off", maxlength: 300,
+                                 placeholder: "sk-or-v1-…" });
+  const keyError = el("p", { class: "error", role: "alert" });
+  const saveKey = el("button", { class: "btn primary", type: "submit" }, "Sprawdź i zapisz klucz");
+  const renderKey = () => {
+    const funds = settings.funds;
+    const left = funds && funds.left !== null && el("span", { class: funds.low ? "warn" : "" },
+      " " + (funds.low ? "⚠ " : "") + "Na płatne modele zostało ok. " + dollars(funds.left) + ".");
+    keyState.replaceChildren(settings.key.set
+      ? el("p", { class: "key-state ok" }, "✓ Masz zapisany własny klucz kończący się na …" + settings.key.hint + ".",
+          left, " ",
+          el("button", {
+            class: "link danger", type: "button", onclick: async () => {
+              const then = settings.shared ? "Będzie używany wspólny klucz serwera."
+                : "Bez klucza CV nie będą odczytywane.";
+              if (!confirm("Usunąć klucz? " + then)) return;
+              await send("settings/key", { key: "" }, keyError);
+            },
+          }, "Usuń klucz"))
+      : settings.shared
+        ? el("p", { class: "key-state ok" }, "✓ Korzystasz ze wspólnego klucza serwera.", left)
+        : el("p", { class: "key-state warn" }, "⚠ Nie masz klucza, a serwer nie ma wspólnego: " +
+            "bez klucza CV nie zostaną odczytane."));
+    keyInput.placeholder = settings.key.set ? "wklej nowy klucz, żeby zmienić" : "sk-or-v1-…";
+  };
+
+  // --- the models
+  const paid = modelList("paid", "Płatne modele",
+    "Pytane najpierw, po kolei, gdy włączone są płatne modele. Kosztują środki z klucza.",
+    catalogue, (m) => !m.free, settings.max);
+  const free = modelList("free", "Darmowe modele",
+    "Pytane po płatnych, a gdy płatne są wyłączone – od razu.", catalogue, (m) => m.free, settings.max);
+  const modelsError = el("p", { class: "error", role: "alert" });
+  const modelsNote = el("span", { class: "muted small" });
+  const paidSwitch = el("div", { class: "switch", role: "group", "aria-label": "Które modele" });
+  const renderModelLists = () => {
+    paid.set(settings.paid);
+    free.set(settings.free);
+    modelsNote.textContent = settings.custom ? "To twoja własna lista." : "To lista domyślna.";
+  };
+  const renderSwitch = () => {
+    const option = (on, label) => el("button", {
+      type: "button", class: "switch-option" + (settings.use_paid === on ? " on" : ""),
+      disabled: on && !settings.paid.length,
+      title: on && !settings.paid.length ? "Lista płatnych modeli jest pusta" : null,
+      onclick: () => settings.use_paid !== on && send("settings/paid", { use_paid: on }, modelsError),
+    }, label);
+    paidSwitch.replaceChildren(option(true, "Najpierw płatne"), option(false, "Tylko darmowe"));
+  };
+
+  async function send(path, body, error, button) {
+    error.textContent = "";
+    if (button) button.disabled = true;
+    try {
+      settings = await api("POST", path, body);
+      me.has_key = settings.key.set || settings.shared;
+      renderAccount();
+      renderKey();
+      renderSwitch();
+      if (path === "settings/models") renderModelLists();
+      return true;
+    } catch (e) {
+      error.textContent = e.message;
+      return false;
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  const saveModels = el("button", { class: "btn primary", type: "button" }, "Zapisz modele");
+  saveModels.addEventListener("click", async () => {
+    if (await send("settings/models", { paid: paid.get(), free: free.get() }, modelsError, saveModels)) {
+      modelsNote.textContent = "Zapisano.";
+    }
+  });
+  const dialog = el("dialog", { class: "panel settings-dialog" },
+    el("div", { class: "item-top" }, el("h2", {}, "Ustawienia"),
+      el("button", { class: "btn small", type: "button", onclick: () => dialog.close() }, "Zamknij")),
+
+    el("h3", { class: "form-section" }, "Klucz API OpenRoutera"),
+    el("p", { class: "hint" }, "CV czytają i analizują modele językowe z ",
+      el("a", { href: "https://openrouter.ai/keys", target: "_blank", rel: "noopener" }, "OpenRoutera"),
+      ". Możesz podać własny klucz – wtedy płacisz ze swoich środków" +
+      (settings.shared ? "; bez niego używany jest wspólny klucz serwera" : "") +
+      ". Klucz jest przechowywany na serwerze zaszyfrowany i nigdy nie jest pokazywany."),
+    keyState,
+    el("form", {
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (!keyInput.value.trim()) { keyError.textContent = "Wklej klucz."; return; }
+        saveKey.textContent = "Sprawdzam…";
+        if (await send("settings/key", { key: keyInput.value }, keyError, saveKey)) keyInput.value = "";
+        saveKey.textContent = "Sprawdź i zapisz klucz";
+      },
+    },
+      el("label", { for: "api-key" }, "Własny klucz"),
+      el("div", { class: "row" }, keyInput, saveKey),
+      keyError),
+
+    el("h3", { class: "form-section" }, "Modele"),
+    el("p", { class: "hint" }, "Modele są pytane po kolei, aż któryś da poprawną odpowiedź: model przeciążony " +
+      "albo taki, na który zabrakło środków, jest pomijany. Darmowe modele bywają wolniejsze i mniej dokładne, " +
+      "a ich dostawcy mogą zapisywać przesłane dane – w tym treść CV."),
+    paidSwitch,
+    paid.node, free.node,
+    el("p", { class: "model-last" }, "🔒 Na końcu zawsze: ", el("b", {}, settings.last),
+      el("span", { class: "muted small" }, " – dowolny darmowy model, gdy żaden z powyższych nie odpowie. " +
+        "Tego nie da się zmienić.")),
+    modelsError,
+    el("div", { class: "row end" }, modelsNote,
+      el("button", {
+        class: "btn", type: "button", onclick: async () => {
+          if (await send("settings/models", { reset: true }, modelsError)) modelsNote.textContent = "Przywrócono domyślne.";
+        },
+      }, "Przywróć domyślne"),
+      saveModels));
+  dialog.addEventListener("close", () => dialog.remove());
+  renderKey();
+  renderSwitch();
+  renderModelLists();
+  document.body.append(dialog);
+  dialog.showModal();
+}
