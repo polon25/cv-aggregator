@@ -346,7 +346,11 @@ a results page of tiles, as the bookmarklet sends one: each link and the
 largest element of the mail's HTML around it with no other offer (or, in
 a plain text mail, its block). [importer.py](importer.py) then has a
 model read them and sifts them like any others; their offers wait for
-the day's ratings. Seen in pracuj.pl's alerts (`jobalert@wysylka.pracuj.pl`)
+the day's ratings. An alert whose offers were kept then goes to the
+mailbox's trash (found by its special-use flag; Gmail empties it after 30
+days), unless the user turns that off; one no model could read is tried
+again later (5 times, half an hour more apart each time), its mail kept
+till then. Seen in pracuj.pl's alerts (`jobalert@wysylka.pracuj.pl`)
 and LinkedIn's (`jobs-noreply@linkedin.com`, `jobalerts-noreply@linkedin.com`).
 
 ## Data

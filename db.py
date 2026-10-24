@@ -29,10 +29,13 @@
     searches    when a portal was last searched for a term, with what came
                 of it
     places      where a place is (see geo.py), NULL when it wasn't found
-    imports     a page a user sent from their browser (see importer.py):
-                its address, what it showed (`payload`, JSON, dropped once
-                read), status (pending, working, done, failed), what came
-                of it (`result`, JSON) or what went wrong
+    imports     a page a user sent from their browser, or a job alert
+                from their mailbox (see importer.py): its address, what it
+                showed (`payload`, JSON, dropped once read), status
+                (pending, working, done, failed), what came of it
+                (`result`, JSON) or what went wrong; for an alert, its
+                mail (by UID) and whether it went to the trash, and how
+                often reading it failed (it's tried again later)
     matches     an offer kept for a user: how promising it looked to the
                 program (`prescore`), what a model made of it (`review`,
                 with `score` 0..100; `wanted`: the user asked for it,
@@ -124,7 +127,12 @@ CREATE TABLE IF NOT EXISTS imports (
     payload TEXT,                        -- JSON; NULL once read
     status TEXT NOT NULL,                -- pending, working, done, failed
     result TEXT,                         -- JSON, see importer.process
-    error TEXT
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0, -- a job alert is read again...
+    not_before REAL,                     -- ...when a model failed, later
+    mail_uid INTEGER,                    -- a job alert's mail, by its UID
+    mail_validity TEXT,                  -- in the folder of this UIDVALIDITY
+    mail_trashed INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS places (
     key TEXT PRIMARY KEY,                -- candidate.normalize(name)
@@ -185,6 +193,10 @@ ADDED_COLUMNS = (
     ("profiles", "growth", "TEXT"), ("profiles", "growth_status", "TEXT"),
     ("profiles", "growth_error", "TEXT"), ("profiles", "growth_at", "REAL"),
     ("profiles", "growth_model", "TEXT"),
+    ("imports", "attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("imports", "not_before", "REAL"), ("imports", "mail_uid", "INTEGER"),
+    ("imports", "mail_validity", "TEXT"),
+    ("imports", "mail_trashed", "INTEGER NOT NULL DEFAULT 0"),
     ("matches", "penalty", "INTEGER NOT NULL DEFAULT 0"),
 )
 
@@ -931,17 +943,20 @@ def users_wanting_reviews(conn):
 def add_import(conn, user_id, payload):
     with conn:
         cursor = conn.execute(
-            "INSERT INTO imports (user_id, created_at, url, payload, status) "
-            "VALUES (?, ?, ?, ?, 'pending')",
+            "INSERT INTO imports (user_id, created_at, url, payload, status, "
+            "mail_uid, mail_validity) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
             (user_id, time.time(), payload["url"],
-             json.dumps(payload, ensure_ascii=False)))
+             json.dumps(payload, ensure_ascii=False), payload.get("uid"),
+             payload.get("uidvalidity")))
     return cursor.lastrowid
 
 
 def claim_import(conn):
-    """The oldest page waiting to be read, marked as being read."""
-    row = conn.execute("SELECT * FROM imports WHERE status = 'pending' "
-                       "ORDER BY id LIMIT 1").fetchone()
+    """The oldest page waiting to be read (and not put off), marked as
+    being read."""
+    row = conn.execute("SELECT * FROM imports WHERE status = 'pending' AND "
+                       "(not_before IS NULL OR not_before <= ?) ORDER BY id "
+                       "LIMIT 1", (time.time(),)).fetchone()
     if not row:
         return None
     with conn:
@@ -958,6 +973,29 @@ def finish_import(conn, import_id, result=None, error=None):
                      ("failed" if error else "done",
                       json.dumps(result) if result else None, error,
                       import_id))
+
+
+def retry_import(conn, import_id, delay):
+    """Puts an import off by `delay` seconds, to be read again then."""
+    with conn:
+        conn.execute("UPDATE imports SET status = 'pending', attempts = "
+                     "attempts + 1, not_before = ? WHERE id = ?",
+                     (time.time() + delay, import_id))
+
+
+def alerts_to_trash(conn, user_id, validity):
+    """[(import id, mail UID)] of the user's job alerts read and kept, not
+    yet moved to the trash, in the folder of this UIDVALIDITY."""
+    return [(r["id"], r["mail_uid"]) for r in conn.execute(
+        "SELECT id, mail_uid FROM imports WHERE user_id = ? AND status = "
+        "'done' AND mail_uid IS NOT NULL AND mail_trashed = 0 AND "
+        "mail_validity = ?", (user_id, validity))]
+
+
+def alerts_trashed(conn, import_ids):
+    with conn:
+        conn.executemany("UPDATE imports SET mail_trashed = 1 WHERE id = ?",
+                         [(i,) for i in import_ids])
 
 
 def get_import(conn, user_id, import_id):

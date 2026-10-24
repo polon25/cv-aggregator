@@ -48,6 +48,10 @@ import worker
 log = logging.getLogger("offers")
 
 CHECK_SECONDS = 300
+# A job alert that no model could read is tried again this many times,
+# after this many seconds more each time.
+ALERT_ATTEMPTS = 5
+ALERT_PAUSE = 1800
 # Places looked up on Nominatim at most per user and search.
 GEOCODE_BUDGET = 40
 _wake = threading.Event()
@@ -113,7 +117,8 @@ def _once():
 def _read_mail(conn):
     """Reads the job alerts that came to users' mailboxes since the last
     time (alerts.py), each user's every config.MAIL_INTERVAL minutes; each
-    alert becomes an import."""
+    alert becomes an import. Alerts read and kept before go to the trash
+    (unless the user keeps them)."""
     for user_id in db.mailbox_users(conn):
         box, password = db.mailbox(conn, user_id)
         if not box or not password or time.time() - (
@@ -129,6 +134,16 @@ def _read_mail(conn):
         box["read_at"] = time.time()
         for page in pages:
             db.add_import(conn, user_id, page)
+        if box.get("trash", True) and not box.get("error"):
+            done = db.alerts_to_trash(conn, user_id, box.get("uidvalidity"))
+            try:
+                moved = alerts.trash(box, password, [uid for _, uid in done])
+                db.alerts_trashed(conn, [i for i, _ in done])
+                if moved:
+                    log.info("User %d: %d job alerts moved to the trash",
+                             user_id, moved)
+            except (alerts.AlertsError, imaplib.IMAP4.error, OSError) as e:
+                log.warning("Alerts of user %d not trashed: %s", user_id, e)
         if pages:
             box["alerts"] = box.get("alerts", 0) + len(pages)
             box["alert_at"] = time.time()
@@ -146,7 +161,13 @@ def _import_one(conn):
     try:
         db.finish_import(conn, item["id"], importer.process(conn, item))
     except importer.ImportFailed as e:
-        db.finish_import(conn, item["id"], error=str(e))
+        # a job alert is read again later: its mail stays till then
+        if e.retry and item["payload"].get("mail") and \
+                item["attempts"] < ALERT_ATTEMPTS:
+            db.retry_import(conn, item["id"],
+                            ALERT_PAUSE * (item["attempts"] + 1))
+        else:
+            db.finish_import(conn, item["id"], error=str(e))
     except Exception:
         log.exception("Import %d failed", item["id"])
         db.finish_import(conn, item["id"], error="Nie udało się odczytać "

@@ -215,6 +215,8 @@ label.toggle input:disabled + span { opacity: .55; }
 .settings-dialog .model-last { margin-left: 1.7rem; }
 .mail-fields { gap: 0 1rem; }
 .mail-more { margin-top: .8rem; font-size: .9rem; }
+label.check.mail-trash { margin-top: .9rem; align-items: flex-start; }
+label.check.mail-trash input { margin-top: .3rem; }
 .mail-more summary { cursor: pointer; color: var(--muted); }
 .hint.warn { color: var(--warn); }
 

@@ -191,6 +191,7 @@ async function settingsDialog() {
   const mailHost = el("input", { type: "text", id: "mail-host", maxlength: 253,
                                  placeholder: "uzupełni się dla Gmaila, WP, Onetu, Interii…" });
   const mailFolder = el("input", { type: "text", id: "mail-folder", maxlength: 100, placeholder: "INBOX" });
+  const mailTrash = el("input", { type: "checkbox", id: "mail-trash" });
   const mailState = el("div", {});
   const mailError = el("p", { class: "error", role: "alert" });
   const saveMail = el("button", { class: "btn primary", type: "submit" }, "Sprawdź i zapisz");
@@ -199,6 +200,7 @@ async function settingsDialog() {
     mailAddress.value = box ? box.address : "";
     mailHost.value = box ? box.host : "";
     mailFolder.value = box ? box.folder : "";
+    mailTrash.checked = !box || box.trash !== false;
     mailPassword.value = "";
     mailPassword.placeholder = box ? "zostaw puste, żeby nie zmieniać" : "";
     fill(mailState, box
@@ -207,7 +209,8 @@ async function settingsDialog() {
             : "✓ Skrzynka " + box.address + " (" + box.host + ", folder " + box.folder + "): " + box.messages +
               " wiadomości. ") +
           (box.read_at ? "Sprawdzana co pół godziny, ostatnio " + fmtTime(box.read_at) + "; odczytanych alertów: " +
-            (box.alerts || 0) + (box.alert_at ? " (ostatni " + fmtTime(box.alert_at) + ")" : "") + ". "
+            (box.alerts || 0) + (box.alert_at ? " (ostatni " + fmtTime(box.alert_at) + ")" : "") + ". " +
+            (box.trash !== false ? "Odczytane trafiają do kosza. " : "")
             : "Pierwsze odczytanie alertów (z ostatnich 2 tygodni) za chwilę. "),
           el("button", {
             class: "link danger", type: "button", onclick: async () => {
@@ -222,7 +225,8 @@ async function settingsDialog() {
     e.preventDefault();
     saveMail.textContent = "Łączę…";
     if (await send("settings/mailbox", { address: mailAddress.value, password: mailPassword.value,
-                                          host: mailHost.value, folder: mailFolder.value }, mailError, saveMail)) {
+                                          host: mailHost.value, folder: mailFolder.value, trash: mailTrash.checked },
+                   mailError, saveMail)) {
       renderMailbox();
     }
     saveMail.textContent = "Sprawdź i zapisz";
@@ -297,6 +301,10 @@ async function settingsDialog() {
       el("div", { class: "two mail-fields" },
         el("div", {}, el("label", { for: "mail-address" }, "Adres skrzynki"), mailAddress),
         el("div", {}, el("label", { for: "mail-password" }, "Hasło (do aplikacji)"), mailPassword)),
+      el("label", { class: "check mail-trash", for: "mail-trash" }, mailTrash,
+        el("span", {}, "Przenoś odczytane alerty do kosza",
+          el("span", { class: "option-hint" }, "Dopiero gdy ich oferty są zapisane w aplikacji; mail, którego nie " +
+            "udało się odczytać, zostaje. W Gmailu kosz opróżnia się sam po 30 dniach."))),
       el("details", { class: "mail-more" }, el("summary", {}, "Serwer i folder"),
         el("div", { class: "two mail-fields" },
           el("div", {}, el("label", { for: "mail-host" }, "Serwer IMAP"), mailHost),

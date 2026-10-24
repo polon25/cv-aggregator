@@ -4,8 +4,11 @@ in and says how many messages there are, collect() reads the mails that
 came since the last time; each with links to offers (by the "link"
 patterns of portals/, whoever sent it: forwarded by hand too) becomes a
 page of tiles for importer.py, as a results page sent from the browser.
-The mailbox is only ever opened read-only (EXAMINE) and read with
-BODY.PEEK, so nothing in it is changed, not even marked as read.
+Mails are read from the folder opened read-only (EXAMINE), with
+BODY.PEEK, so reading changes nothing, not even marks them read; trash()
+then moves the alerts whose offers the app kept to the mailbox's trash
+(unless the user turned that off), where the provider deletes them later
+(Gmail after 30 days), to keep the mailbox from filling up.
 
 The user's own mailbox is meant to forward the alerts to one kept for the
 app alone (e.g. a Gmail account with an app password), so that the server
@@ -77,9 +80,9 @@ def clean(settings):
             "folder": folder[:100]}
 
 
-def connect(mailbox, password):
-    """A logged-in IMAP connection with the folder open read-only, and the
-    number of messages in it."""
+def connect(mailbox, password, readonly=True):
+    """A logged-in IMAP connection with the folder open (read-only unless
+    told otherwise), and the number of messages in it."""
     try:
         imap = _IMAP(mailbox["host"], mailbox["port"],
                      ssl_context=ssl.create_default_context())
@@ -94,7 +97,7 @@ def connect(mailbox, password):
                           "potrzebne jest hasło do aplikacji, nie hasło do "
                           "konta.")
     status, data = imap.select('"%s"' % mailbox["folder"].replace('"', ""),
-                               readonly=True)
+                               readonly=readonly)
     if status != "OK":
         imap.logout()
         raise AlertsError("Nie ma folderu „%s”." % mailbox["folder"])
@@ -281,6 +284,7 @@ def collect(mailbox, password):
                         if isinstance(part, tuple)), None)
             one = page(raw) if raw else None
             if one:
+                one.update(uid=uid, uidvalidity=validity)
                 found.append(one)
         state.update(uidvalidity=validity, messages=count,
                      last_uid=max(uids) if uids else last or 0)
@@ -290,3 +294,51 @@ def collect(mailbox, password):
         except (imaplib.IMAP4.error, OSError):
             pass
     return found, state
+
+
+LIST_RE = re.compile(r'\((?P<flags>[^)]*)\) (?:"[^"]*"|NIL) (?P<name>.+)$')
+
+
+def _trash_folder(imap):
+    """The mailbox's trash, by its special-use flag (RFC 6154; Gmail's is
+    "[Gmail]/Trash", or "[Gmail]/Kosz" in Polish), or None."""
+    status, folders = imap.list()
+    for line in folders or []:
+        m = LIST_RE.match(line.decode("utf-8", "replace") if isinstance(
+            line, bytes) else str(line))
+        if m and "\\trash" in m.group("flags").lower():
+            return m.group("name")
+    return None
+
+
+def trash(mailbox, password, uids):
+    """Moves the mails (by UID) to the mailbox's trash; where it has none,
+    deletes them. Returns how many were moved or deleted."""
+    if not uids:
+        return 0
+    imap, _ = connect(mailbox, password, readonly=False)
+    try:
+        found = imap.uid("SEARCH", None, "UID", ",".join(map(str, uids)))[1]
+        present = [u for u in (found[0] or b"").split()
+                   if int(u) in set(uids)]
+        if not present:
+            return 0
+        which = b",".join(present).decode()
+        folder = _trash_folder(imap)
+        if folder and folder.strip('"') != mailbox["folder"]:
+            if "MOVE" in imap.capabilities:
+                status, _ = imap.uid("MOVE", which, folder)
+                if status == "OK":
+                    return len(present)
+            imap.uid("COPY", which, folder)
+        imap.uid("STORE", which, "+FLAGS.SILENT", "(\\Deleted)")
+        if "UIDPLUS" in imap.capabilities:
+            imap.uid("EXPUNGE", which)
+        else:
+            imap.expunge()
+        return len(present)
+    finally:
+        try:
+            imap.logout()
+        except (imaplib.IMAP4.error, OSError):
+            pass

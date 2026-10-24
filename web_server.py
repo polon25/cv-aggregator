@@ -22,10 +22,12 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/settings/use     {use_paid, use_free} (either): whether the
                                paid models may be used, and the free ones
     POST /api/settings/reviews {daily}: offers a model rates a day
-    POST /api/settings/mailbox {address, password, host, port, folder}: the
+    POST /api/settings/mailbox {address, password, host, port, folder,
+                               trash}: the
                                mailbox job alerts are forwarded to, checked
                                by logging in (alerts.py) and kept, the
-                               password sealed (left empty: the one kept);
+                               password sealed (left empty: the one kept),
+                               and whether alerts read go to the trash;
                                {remove: true} forgets it
     GET  /api/models           OpenRouter's models with their prices
     GET  /api/schema           the profile's fields and sections
@@ -436,6 +438,7 @@ class Handler(SimpleHTTPRequestHandler):
             except alerts.AlertsError as e:
                 raise db.Error(str(e))
             box["checked_at"] = time.time()
+            box["trash"] = body.get("trash") is not False
             if old and all(old.get(k) == box[k] for k in
                            ("address", "host", "port", "folder")):
                 # the same mailbox: what was read of it stays read

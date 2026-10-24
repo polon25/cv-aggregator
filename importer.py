@@ -114,7 +114,7 @@ def process(conn, item):
     except llm.LLMError as e:
         log.warning("Import %d not read: %s", item["id"], e)
         raise ImportFailed(worker.FAILED if account["use_free"]
-                           else worker.PAID_FAILED)
+                           else worker.PAID_FAILED, retry=True)
     if not found and not known_tiles:
         raise ImportFailed("Nie znalazłam na tej stronie ofert pracy.")
     db.save_offers(conn, found)
@@ -156,4 +156,9 @@ def process(conn, item):
 
 
 class ImportFailed(Exception):
-    """An import that can't be done, with a message for the user."""
+    """An import that can't be done, with a message for the user; `retry`:
+    it might be done later (no model answered)."""
+
+    def __init__(self, message, retry=False):
+        super().__init__(message)
+        self.retry = retry
