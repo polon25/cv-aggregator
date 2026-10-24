@@ -1,8 +1,9 @@
 "use strict";
 // The user's settings: their OpenRouter API key (or the server's, when
 // they give none), their ladder of models, paid ones and free ones, in the
-// order the agents ask them, and whether the paid ones come first. Uses
-// the helpers of app.js (el, api) and its `me`.
+// order the agents ask them, and whether each of the two may be used: free
+// models' providers may keep what they're sent, so they're off until the
+// user turns them on. Uses the helpers of app.js (el, api) and its `me`.
 
 function dollars(amount) {
   return amount.toFixed(2).replace(".", ",") + " USD";
@@ -122,27 +123,41 @@ async function settingsDialog() {
 
   // --- the models
   const paid = modelList("paid", "Płatne modele",
-    "Pytane najpierw, po kolei, gdy włączone są płatne modele. Kosztują środki z klucza.",
+    "Pytane najpierw, po kolei. Kosztują środki z klucza.",
     catalogue, (m) => !m.free, settings.max);
   const free = modelList("free", "Darmowe modele",
-    "Pytane po płatnych, a gdy płatne są wyłączone – od razu.", catalogue, (m) => m.free, settings.max);
+    "Pytane po płatnych (albo od razu, gdy płatne są wyłączone).", catalogue, (m) => m.free, settings.max);
   const modelsError = el("p", { class: "error", role: "alert" });
   const modelsNote = el("span", { class: "muted small" });
-  const paidSwitch = el("div", { class: "switch", role: "group", "aria-label": "Które modele" });
+  const usePaid = el("input", { type: "checkbox", id: "use-paid" });
+  const useFree = el("input", { type: "checkbox", id: "use-free" });
+  const lastNote = el("p", { class: "model-last" }, "🔒 Na końcu zawsze: ", el("b", {}, settings.last),
+    el("span", { class: "muted small" }, " – dowolny darmowy model, gdy żaden z powyższych nie odpowie."));
+  const noneNote = el("p", { class: "key-state warn" }, "⚠ Wszystkie modele są wyłączone: CV nie będą odczytywane.");
   const renderModelLists = () => {
     paid.set(settings.paid);
     free.set(settings.free);
     modelsNote.textContent = settings.custom ? "To twoja własna lista." : "To lista domyślna.";
   };
   const renderSwitch = () => {
-    const option = (on, label) => el("button", {
-      type: "button", class: "switch-option" + (settings.use_paid === on ? " on" : ""),
-      disabled: on && !settings.paid.length,
-      title: on && !settings.paid.length ? "Lista płatnych modeli jest pusta" : null,
-      onclick: () => settings.use_paid !== on && send("settings/paid", { use_paid: on }, modelsError),
-    }, label);
-    paidSwitch.replaceChildren(option(true, "Najpierw płatne"), option(false, "Tylko darmowe"));
+    usePaid.checked = settings.use_paid;
+    usePaid.disabled = !settings.paid.length;
+    useFree.checked = settings.use_free;
+    paid.node.classList.toggle("off", !settings.use_paid);
+    free.node.classList.toggle("off", !settings.use_free);
+    lastNote.hidden = !settings.use_free;
+    noneNote.hidden = settings.use_paid || settings.use_free;
   };
+  usePaid.addEventListener("change", () => send("settings/use", { use_paid: usePaid.checked }, modelsError));
+  useFree.addEventListener("change", async () => {
+    if (useFree.checked && !confirm("Włączyć darmowe modele?\n\nDostawcy darmowych modeli mogą zapisywać " +
+        "przesłane im dane i używać ich do trenowania modeli. Trafi do nich treść twoich CV: dane osobowe, " +
+        "kontakt i historia zatrudnienia.")) {
+      useFree.checked = false;
+      return;
+    }
+    await send("settings/use", { use_free: useFree.checked }, modelsError);
+  });
 
   async function send(path, body, error, button) {
     error.textContent = "";
@@ -150,10 +165,11 @@ async function settingsDialog() {
     try {
       settings = await api("POST", path, body);
       me.has_key = settings.key.set || settings.shared;
+      me.has_models = settings.use_paid || settings.use_free;
       renderAccount();
       renderKey();
-      renderSwitch();
       if (path === "settings/models") renderModelLists();
+      renderSwitch();
       return true;
     } catch (e) {
       error.textContent = e.message;
@@ -195,13 +211,24 @@ async function settingsDialog() {
 
     el("h3", { class: "form-section" }, "Modele"),
     el("p", { class: "hint" }, "Modele są pytane po kolei, aż któryś da poprawną odpowiedź: model przeciążony " +
-      "albo taki, na który zabrakło środków, jest pomijany. Darmowe modele bywają wolniejsze i mniej dokładne, " +
-      "a ich dostawcy mogą zapisywać przesłane dane – w tym treść CV."),
-    paidSwitch,
-    paid.node, free.node,
-    el("p", { class: "model-last" }, "🔒 Na końcu zawsze: ", el("b", {}, settings.last),
-      el("span", { class: "muted small" }, " – dowolny darmowy model, gdy żaden z powyższych nie odpowie. " +
-        "Tego nie da się zmienić.")),
+      "albo taki, na który zabrakło środków, jest pomijany."),
+    el("label", { class: "toggle", for: "use-paid" }, usePaid,
+      el("span", {}, el("b", {}, "Używaj płatnych modeli"),
+        el("span", { class: "option-hint" }, "Szybsze i dokładniejsze; ich dostawcy zwykle nie trenują na " +
+          "przesłanych danych (można to wymusić w ",
+          el("a", { href: "https://openrouter.ai/settings/privacy", target: "_blank", rel: "noopener" },
+            "ustawieniach prywatności OpenRoutera"),
+          "). Odczyt jednego CV kosztuje ułamek centa."))),
+    paid.node,
+    el("label", { class: "toggle", for: "use-free" }, useFree,
+      el("span", {}, el("b", {}, "Używaj darmowych modeli"),
+        el("span", { class: "option-hint" }, "Także gdy płatne nie odpowiedzą. Wolniejsze, często przeciążone."))),
+    el("p", { class: "privacy-warning" }, "⚠ ", el("b", {}, "Uwaga na prywatność: "),
+      "dostawcy darmowych modeli mogą zapisywać przesłane im dane i używać ich do trenowania modeli. " +
+      "Trafi do nich treść twoich CV – dane osobowe, kontakt i historia zatrudnienia. Gdy darmowe są " +
+      "wyłączone, CV nie zostanie im wysłane nigdy, nawet jeśli płatne zawiodą."),
+    free.node, lastNote,
+    noneNote,
     modelsError,
     el("div", { class: "row end" }, modelsNote,
       el("button", {

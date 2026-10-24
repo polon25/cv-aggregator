@@ -8,8 +8,8 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/login            {username, password}
     POST /api/logout
     GET  /api/me               the user, whether they can have models read
-                               CVs (a key of their own or the server's)
-                               (401 if logged out)
+                               CVs (a key of their own or the server's, and
+                               some models allowed) (401 if logged out)
     GET  /api/settings         the user's OpenRouter key (whether there is
                                one and its last characters, never the key),
                                its funds, the user's lists of paid and
@@ -19,7 +19,8 @@ reply is JSON (but uploads and downloads of CV files); errors are
                                keeps it; an empty one removes it
     POST /api/settings/models  {paid, free}: the user's own lists of
                                models; {reset: true}: the defaults again
-    POST /api/settings/paid    {use_paid}: paid models first, or free only
+    POST /api/settings/use     {use_paid, use_free} (either): whether the
+                               paid models may be used, and the free ones
     GET  /api/models           OpenRouter's models with their prices
     GET  /api/schema           the profile's fields and sections
     GET  /api/profile          the user's CVs, their merged profile, what
@@ -89,6 +90,7 @@ def _settings_json(conn, user):
         else None,
         "paid": account["paid"], "free": account["free"],
         "custom": account["custom"], "use_paid": account["use_paid"],
+        "use_free": account["use_free"],
         "defaults": {"paid": config.OPENROUTER_PAID_MODELS,
                      "free": config.OPENROUTER_MODELS},
         "last": config.OPENROUTER_MODEL, "max": db.MAX_MODELS,
@@ -251,8 +253,10 @@ class Handler(SimpleHTTPRequestHandler):
         if not user:
             raise HttpError(401, "Zaloguj się.")
         if method == "GET" and path == "/api/me":
-            return {"user": user,
-                    "has_key": bool(db.account(conn, user["id"])["key"])}
+            account = db.account(conn, user["id"])
+            return {"user": user, "has_key": bool(account["key"]),
+                    "has_models": account["use_paid"] or
+                    account["use_free"]}
         if path == "/api/settings" or path.startswith("/api/settings/"):
             return self._settings(conn, user, method, path[14:])
         if method == "GET" and path == "/api/models":
@@ -303,8 +307,14 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 db.set_models(conn, user["id"], *_clean_models(body))
             return _settings_json(conn, user)
-        if action == "paid":
-            db.set_use_paid(conn, user["id"], body.get("use_paid"))
+        if action == "use":
+            for which in ("paid", "free"):
+                if "use_" + which in body:
+                    db.set_use(conn, user["id"], which,
+                               body["use_" + which] is True)
+            if "use_free" in body:
+                log.info("%s turned free models %s", user["username"],
+                         "on" if body["use_free"] is True else "off")
             return _settings_json(conn, user)
         raise HttpError(404, "Nie ma takiej strony.")
 

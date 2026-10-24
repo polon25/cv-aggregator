@@ -216,7 +216,9 @@ class ProfileView {
           : el("span", { class: "dots" }, "Wysyłam " + u.name)))),
       drop,
       !me.has_key && el("p", { class: "hint warn" }, "⚠ Bez klucza API OpenRoutera CV nie zostaną odczytane: " +
-        "podaj go w Ustawieniach."));
+        "podaj go w Ustawieniach."),
+      me.has_key && !me.has_models && el("p", { class: "hint warn" }, "⚠ Wszystkie modele są wyłączone, więc " +
+        "CV nie zostaną odczytane: włącz płatne albo darmowe w Ustawieniach."));
   }
 
   cvRow(cv) {

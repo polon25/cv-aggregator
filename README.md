@@ -18,6 +18,10 @@ profile is made"). Only the standard library is needed, plus `pdftotext`
 (poppler-utils) for PDFs and, for DOC and RTF only, LibreOffice. Runs on
 Python 3.8+. The models are [OpenRouter](https://openrouter.ai)'s (the
 server's key, or the user's own), or any other OpenAI-compatible API's.
+Each user chooses whether paid models may be used (on until they choose)
+and whether free ones may (off until they choose: their providers may keep
+what they're sent, the CVs, so with them off no CV ever goes to a free
+model, even when the paid ones fail).
 
 ## Running
 
@@ -32,12 +36,13 @@ Settings (`.env`, see [.env.example](.env.example)):
 | Setting | Default | |
 |---|---|---|
 | `OPENROUTER_API_KEY` | | the key used for users who haven't given their own in the page's settings; empty: everyone must give one |
-| `OPENROUTER_MODEL` | `openrouter/free` | the last model on everyone's ladder, which users can't remove; `openrouter/free` picks some free one per request |
+| `OPENROUTER_MODEL` | `openrouter/free` | the last model on the ladder of everyone using free models, which users can't remove; `openrouter/free` picks some free one per request |
 | `OPENROUTER_MODELS` | | the default list of free models for users who haven't set their own, comma-separated, one attempt each before `OPENROUTER_MODEL`; a model that's down fails fast and one that's rate-limited is asked once more after a few seconds, then the next one is tried; a model still rate-limited then, or one that didn't answer in time, is left out for three minutes, and one that refused (a paid model when the funds have run out, a model that's gone) for an hour |
 | `OPENROUTER_PAID_MODELS` | | the default list of paid models, tried before the free ones for users who want them; `~…` is OpenRouter's alias for the latest model of a family (e.g. `~anthropic/claude-haiku-latest`); Anthropic's models get the system prompt marked for caching |
-| `OPENROUTER_PAID_DEFAULT` | 1 | whether users get the paid models first until they choose |
+| `OPENROUTER_PAID_DEFAULT` | 1 | whether users get the paid models until they choose |
+| `OPENROUTER_FREE_DEFAULT` | 0 | whether users get the free models (`OPENROUTER_MODELS`, `OPENROUTER_MODEL`) until they choose; without them, the first paid model is asked `OPENROUTER_ATTEMPTS` times in all instead of `OPENROUTER_MODEL` |
 | `OPENROUTER_LOW_FUNDS` | 0.5 | dollars left on a key below which the settings warn |
-| `OPENROUTER_ATTEMPTS` | 3 | attempts with `OPENROUTER_MODEL` before a request fails |
+| `OPENROUTER_ATTEMPTS` | 3 | attempts with `OPENROUTER_MODEL` (or, with free models off, the first paid one) before a request fails |
 | `OPENROUTER_TIMEOUT` | 180 | seconds one request may take |
 | `OPENROUTER_TEMPERATURE` | | the model's default when empty |
 | `OPENROUTER_URL` | OpenRouter's | any OpenAI-compatible chat completions endpoint |
@@ -127,7 +132,7 @@ profile can be merged anew whenever a CV comes or goes:
 
 | Table | Holds |
 |---|---|
-| `users` | username and PBKDF2-SHA256 password hash; the user's own OpenRouter key, encrypted, their lists of paid and free models and whether the paid ones come first |
+| `users` | username and PBKDF2-SHA256 password hash; the user's own OpenRouter key, encrypted, their lists of paid and free models and whether each may be used |
 | `logins` | login sessions (a 30-day cookie, stored as its SHA-256) |
 | `cvs` | a CV: file name, kind, size, SHA-256 (the same file can't be uploaded twice), its text and language, what the model read from it (JSON), status (`pending`, `working`, `done`, `failed`) and error, which model read it |
 | `profiles` | the user's own description and what they look for, their changes to the profile (JSON), the analysis (JSON) with its status, model, time and the fingerprint of the profile it was written from |
@@ -138,12 +143,12 @@ profile can be merged anew whenever a CV comes or goes:
 |---|---|
 | `POST /api/register`, `POST /api/login` | `{username, password}`: logs in (cookie) |
 | `POST /api/logout` | |
-| `GET /api/me` | the user, whether there's a key for them |
+| `GET /api/me` | the user, whether there's a key for them and whether any models are on |
 | `GET /api/schema` | the profile's fields and sections, whether accounts can be made |
-| `GET /api/settings` | whether the user has their own key (and its last characters), whether the server has one, funds, lists of models, whether paid ones come first, the defaults |
+| `GET /api/settings` | whether the user has their own key (and its last characters), whether the server has one, funds, lists of models, whether paid and free ones may be used, the defaults |
 | `POST /api/settings/key` | `{key}`: checked with OpenRouter, then kept; empty removes it |
 | `POST /api/settings/models` | `{paid, free}`: the user's own lists; `{reset: true}`: the defaults |
-| `POST /api/settings/paid` | `{use_paid}` |
+| `POST /api/settings/use` | `{use_paid, use_free}` (either): whether paid, free models may be used |
 | `GET /api/models` | OpenRouter's models with their prices |
 | `GET /api/profile` | CVs, the merged profile, what was counted, the user's description, the analysis (and whether it's out of date), whether anything is being worked on |
 | `POST /api/profile/about` | `{about, goals}` |

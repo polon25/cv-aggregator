@@ -81,8 +81,9 @@ function renderAccount() {
     el("span", {}, me.user.username),
     el("button", {
       type: "button", onclick: settingsDialog,
-      title: me.has_key ? null : "Podaj klucz API OpenRoutera, żeby CV mogły być odczytywane",
-    }, me.has_key ? "Ustawienia" : "⚠ Ustawienia"),
+      title: !me.has_key ? "Podaj klucz API OpenRoutera, żeby CV mogły być odczytywane"
+        : !me.has_models ? "Włącz płatne albo darmowe modele, żeby CV mogły być odczytywane" : null,
+    }, me.has_key && me.has_models ? "Ustawienia" : "⚠ Ustawienia"),
     el("button", { type: "button", onclick: logout }, "Wyloguj"));
 }
 

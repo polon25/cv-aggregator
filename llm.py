@@ -41,6 +41,11 @@ class BadKey(LLMError):
     """There's no key, or OpenRouter doesn't know it (HTTP 401)."""
 
 
+class NoModels(LLMError):
+    """The account allows no model: the free ones are off and the paid ones
+    off too, or out of funds."""
+
+
 class Refused(LLMError):
     """The model can't be had for now: the key's credit or spending limit
     is used up (HTTP 402), the model isn't open to this key (403) or it's
@@ -368,19 +373,30 @@ def _rest(key, model, seconds=RATE_LIMIT_REST):
 def ladder(account):
     """The models to ask for an account, in order, as (model, tier): its
     paid ones (tier "paid") when it wants them and has funds, its free
-    ones ("free"), and at last, as often as OPENROUTER_ATTEMPTS says, the
-    one nobody can take off the list (OPENROUTER_MODEL, "last")."""
+    ones ("free") when it wants them, and at last, as often as
+    OPENROUTER_ATTEMPTS says, one more: with the free ones, the free one
+    nobody can take off the list (OPENROUTER_MODEL, "last"); without them,
+    the first paid one again ("again"). Free models' providers may keep
+    what they're sent, so an account without them never gets one, even
+    when every paid one fails."""
     last = config.OPENROUTER_MODEL
+    free = account.get("use_free", True)
     rungs = []
     if account.get("use_paid") and funds_status(account["key"])["available"]:
         rungs += [(m, "paid") for m in account["paid"]]
-    rungs += [(m, "free") for m in account["free"]]
-    seen, unique = {last}, []
+    if free:
+        rungs += [(m, "free") for m in account["free"]]
+    seen, unique = {last} if free else set(), []
     for model, tier in rungs:
         if model not in seen:
             seen.add(model)
             unique.append((model, tier))
-    return unique + [(last, "last")] * config.OPENROUTER_ATTEMPTS
+    if free:
+        return unique + [(last, "last")] * config.OPENROUTER_ATTEMPTS
+    if not unique:
+        return []
+    return unique + [(unique[0][0], "again")] * (
+        config.OPENROUTER_ATTEMPTS - 1)
 
 
 def ask_json(messages, purpose, validate, account, think=True):
@@ -394,14 +410,21 @@ def ask_json(messages, purpose, validate, account, think=True):
     that didn't answer in time, gets left out of the account's next
     requests for a while, and one that refused (a paid model with no
     credit left, a model that's gone) for longer, so that the models
-    after it take over. Raises BadKey at once when the key is no good,
-    LLMError when every attempt failed."""
+    after it take over (when all are left out, they're asked anyway).
+    Raises BadKey at once when the key is no good, NoModels when the
+    account allows no model, LLMError when every attempt failed."""
     key = account.get("key")
     if not key:
         raise BadKey("no API key")
     now = time.monotonic()
-    rungs = [(m, tier) for m, tier in ladder(account)
-             if tier == "last" or _resting.get((_mark(key), m), 0) <= now]
+    allowed = ladder(account)
+    if not allowed:
+        raise NoModels("no models allowed (free ones off, paid ones %s)" % (
+            "off" if not account.get("use_paid") or not account.get("paid")
+            else "out of funds"))
+    rungs = [(m, tier) for m, tier in allowed
+             if tier in ("last", "again") or
+             _resting.get((_mark(key), m), 0) <= now] or allowed
     for attempt, (model, tier) in enumerate(rungs, 1):
         try:
             try:
@@ -415,7 +438,7 @@ def ask_json(messages, purpose, validate, account, think=True):
                     text, answered_by = complete(messages, purpose, model,
                                                  key, think)
                 except RateLimited:
-                    if tier != "last":
+                    if tier not in ("last", "again"):
                         _rest(key, model)
                     raise
             try:
@@ -427,9 +450,9 @@ def ask_json(messages, purpose, validate, account, think=True):
         except BadKey:
             raise
         except LLMError as e:
-            if isinstance(e, TimedOut) and tier != "last":
+            if isinstance(e, TimedOut) and tier not in ("last", "again"):
                 _rest(key, model)
-            elif isinstance(e, Refused) and tier != "last":
+            elif isinstance(e, Refused) and tier not in ("last", "again"):
                 _rest(key, model, REFUSED_REST)
                 with _funds_lock:  # perhaps the money has run out
                     _funds.get(_mark(key), {})["at"] = 0.0

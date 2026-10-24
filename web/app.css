@@ -168,15 +168,6 @@ form .btn[type=submit] { margin-top: 1.1rem; }
 }
 
 /* --- settings (settings.js) --- */
-.switch { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.switch-option {
-  flex: 1; padding: .45rem .6rem; border: 0; background: var(--panel); color: inherit;
-  cursor: pointer; font-weight: 500;
-}
-.switch-option + .switch-option { border-left: 1px solid var(--line); }
-.switch-option.on { background: var(--accent); color: var(--accent-text); cursor: default; }
-.switch-option:disabled { color: var(--muted); background: var(--bg); cursor: not-allowed; opacity: .6; }
-
 .settings-dialog { width: min(42rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow-y: auto; color: var(--text); }
 .settings-dialog::backdrop { background: rgba(10, 8, 20, .55); }
 .settings-dialog a { color: var(--accent); }
@@ -202,7 +193,19 @@ form .btn[type=submit] { margin-top: 1.1rem; }
 .icon-btn:disabled { opacity: .35; cursor: default; }
 .icon-btn.danger { color: var(--bad); }
 .model-last { margin: .8rem 0 0; padding: .5rem .7rem; border: 1px dashed var(--line); border-radius: 8px; font-size: .9rem; }
-.settings-dialog .switch { margin-top: .8rem; }
+label.toggle {
+  display: flex; gap: .6rem; align-items: flex-start; margin: 1.1rem 0 0; font-weight: 400; cursor: pointer;
+}
+label.toggle input { flex: none; width: 1.1rem; height: 1.1rem; margin-top: .2rem; accent-color: var(--accent); }
+label.toggle input:disabled + span { opacity: .55; }
+.option-hint { display: block; color: var(--muted); font-size: .85rem; }
+.privacy-warning {
+  margin: .5rem 0 0 1.7rem; padding: .55rem .75rem; border-radius: 8px; font-size: .88rem;
+  background: var(--warn-soft); color: var(--text); border-left: 3px solid var(--warn);
+}
+.model-box.off { opacity: .5; }
+.model-box { margin-left: 1.7rem; }
+.settings-dialog .model-last { margin-left: 1.7rem; }
 .hint.warn { color: var(--warn); }
 
 /* --- the profile (profile.js) --- */

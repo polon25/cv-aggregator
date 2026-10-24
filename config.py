@@ -68,8 +68,12 @@ OPENROUTER_ATTEMPTS = int(os.getenv("OPENROUTER_ATTEMPTS") or "3")
 # who want them (empty: there's no such choice). A name starting with "~"
 # is OpenRouter's alias for the latest of a family.
 OPENROUTER_PAID_MODELS = _list("OPENROUTER_PAID_MODELS")
-# Whether a user who hasn't chosen yet gets the paid models first.
+# Whether a user who hasn't chosen yet gets the paid models.
 OPENROUTER_PAID_DEFAULT = _flag("OPENROUTER_PAID_DEFAULT", "1")
+# And the free ones (OPENROUTER_MODELS, OPENROUTER_MODEL), whose providers
+# may keep what they're sent: the users' CVs. Without them nothing is sent
+# to a free model, even when the paid ones fail.
+OPENROUTER_FREE_DEFAULT = _flag("OPENROUTER_FREE_DEFAULT", "0")
 # Dollars left on the key or the account below which the settings warn
 # that the paid models' funds are running out.
 OPENROUTER_LOW_FUNDS = float(os.getenv("OPENROUTER_LOW_FUNDS") or "0.5")

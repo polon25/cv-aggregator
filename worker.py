@@ -30,6 +30,13 @@ NO_KEY = ("Brak klucza API OpenRoutera: podaj swój w Ustawieniach (serwer "
 BAD_KEY = "OpenRouter nie przyjął klucza API – sprawdź go w Ustawieniach."
 FAILED = ("Żaden model nie dał użytecznej odpowiedzi (przeciążone albo "
           "brak środków). Spróbuj ponownie za chwilę.")
+PAID_FAILED = ("Płatne modele nie dały użytecznej odpowiedzi (przeciążone "
+               "albo brak środków na kluczu), a darmowe są wyłączone "
+               "w Ustawieniach. Spróbuj ponownie za chwilę.")
+NO_MODELS = ("Wszystkie modele są wyłączone w Ustawieniach: włącz płatne "
+             "albo darmowe.")
+NO_FUNDS = ("Na kluczu API skończyły się środki na płatne modele, a darmowe "
+            "są wyłączone w Ustawieniach.")
 
 
 def wake():
@@ -71,10 +78,12 @@ def _work_once():
         conn.close()
 
 
-def _error(e):
+def _error(e, account):
     if isinstance(e, llm.BadKey):
         return BAD_KEY if "no API key" not in str(e) else NO_KEY
-    return FAILED
+    if isinstance(e, llm.NoModels):
+        return NO_FUNDS if account["use_paid"] else NO_MODELS
+    return FAILED if account["use_free"] else PAID_FAILED
 
 
 def read_cv(conn, cv):
@@ -103,7 +112,7 @@ def read_cv(conn, cv):
                                            known)
     except llm.LLMError as e:
         log.warning("CV %d not read: %s", cv["id"], e)
-        db.finish_cv(conn, cv["id"], error=_error(e))
+        db.finish_cv(conn, cv["id"], error=_error(e, account))
         return _after_cv(conn, cv["user_id"])
     db.finish_cv(conn, cv["id"], extraction=extraction, model=model)
     _after_cv(conn, cv["user_id"])
@@ -126,12 +135,13 @@ def analyze(conn, user_id):
                            "albo uzupełnij go ręcznie.")
         return
     log.info("Analyzing the profile of user %d", user_id)
+    account = db.account(conn, user_id)
     try:
         analysis, model = agents.analyze(text, candidate.stats(profile),
-                                         db.account(conn, user_id))
+                                         account)
     except llm.LLMError as e:
         log.warning("Analysis for user %d failed: %s", user_id, e)
-        db.finish_analysis(conn, user_id, error=_error(e))
+        db.finish_analysis(conn, user_id, error=_error(e, account))
         return
     db.finish_analysis(conn, user_id, analysis, candidate.fingerprint(text),
                        model)
