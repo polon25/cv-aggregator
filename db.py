@@ -14,7 +14,9 @@
                 words), their changes to what the CVs say (see
                 candidate.py), the analysis a model wrote of the profile
                 (status as for CVs; `analysis_of`: the fingerprint of the
-                profile it was written from), when their offers were last
+                profile it was written from), advice on what to learn
+                from the offers kept for them (`growth`, status as for
+                the analysis), when their offers were last
                 looked for and whether they asked for it now, when they
                 last changed what they look for (`wishes_at`: offers
                 rated before are rated again, and the day's number of
@@ -104,7 +106,12 @@ CREATE TABLE IF NOT EXISTS profiles (
     wishes TEXT,                         -- JSON, see matching.py
     offers_at REAL,                      -- offers last looked for
     offers_wanted INTEGER NOT NULL DEFAULT 0,
-    wishes_at REAL                       -- what they look for last changed
+    wishes_at REAL,                      -- what they look for last changed
+    growth TEXT,                         -- JSON, see agents.advise
+    growth_status TEXT,                  -- pending, working, done, failed
+    growth_error TEXT,
+    growth_at REAL,
+    growth_model TEXT                    -- JSON: who wrote it
 );
 CREATE TABLE IF NOT EXISTS imports (
     id INTEGER PRIMARY KEY,
@@ -171,6 +178,9 @@ ADDED_COLUMNS = (
     ("profiles", "wishes_at", "REAL"),
     ("matches", "extra", "INTEGER NOT NULL DEFAULT 0"),
     ("matches", "unmet", "TEXT"),
+    ("profiles", "growth", "TEXT"), ("profiles", "growth_status", "TEXT"),
+    ("profiles", "growth_error", "TEXT"), ("profiles", "growth_at", "REAL"),
+    ("profiles", "growth_model", "TEXT"),
     ("matches", "penalty", "INTEGER NOT NULL DEFAULT 0"),
 )
 
@@ -224,6 +234,8 @@ def init():
                      "WHERE status = 'working'")
         conn.execute("UPDATE profiles SET analysis_status = 'pending' "
                      "WHERE analysis_status = 'working'")
+        conn.execute("UPDATE profiles SET growth_status = 'pending' "
+                     "WHERE growth_status = 'working'")
         conn.execute("UPDATE imports SET status = 'pending' WHERE "
                      "status = 'working' AND payload IS NOT NULL")
         # offers are judged again after a restart, by the program as it
@@ -532,7 +544,9 @@ def _profile_row(row, user_id):
                 "analysis_of": None, "analysis_model": None,
                 "analysis_at": None, "updated_at": None,
                 "wishes": matching.empty(), "offers_at": None,
-                "offers_wanted": 0, "wishes_at": None}
+                "offers_wanted": 0, "wishes_at": None, "growth": None,
+                "growth_status": None, "growth_error": None,
+                "growth_at": None, "growth_model": None}
     wishes = matching.empty()
     wishes.update(json.loads(row["wishes"] or "{}"))
     row["wishes"] = wishes
@@ -542,6 +556,8 @@ def _profile_row(row, user_id):
     row["analysis"] = json.loads(row["analysis"]) if row["analysis"] else None
     row["analysis_model"] = json.loads(row["analysis_model"]) \
         if row["analysis_model"] else None
+    for key in ("growth", "growth_model"):
+        row[key] = json.loads(row[key]) if row.get(key) else None
     return row
 
 
@@ -991,3 +1007,39 @@ def seen_offers(conn, ids):
     with conn:
         conn.executemany("UPDATE offers SET last_seen = ? WHERE id = ?",
                          [(time.time(), i) for i in ids])
+
+
+# --- advice on what to learn ---------------------------------------------
+
+def request_growth(conn, user_id):
+    with conn:
+        _ensure_profile(conn, user_id)
+        conn.execute("UPDATE profiles SET growth_status = 'pending', "
+                     "growth_error = NULL WHERE user_id = ?", (user_id,))
+
+
+def claim_growth(conn):
+    """The next user whose advice waits to be written, marked as being
+    written; None if none."""
+    row = conn.execute("SELECT user_id FROM profiles WHERE growth_status = "
+                       "'pending' LIMIT 1").fetchone()
+    if not row:
+        return None
+    with conn:
+        conn.execute("UPDATE profiles SET growth_status = 'working' WHERE "
+                     "user_id = ?", (row["user_id"],))
+    return row["user_id"]
+
+
+def finish_growth(conn, user_id, advice=None, model=None, error=None):
+    with conn:
+        if error:
+            conn.execute("UPDATE profiles SET growth_status = 'failed', "
+                         "growth_error = ? WHERE user_id = ?",
+                         (error, user_id))
+            return
+        conn.execute("UPDATE profiles SET growth = ?, growth_status = 'done', "
+                     "growth_error = NULL, growth_at = ?, growth_model = ? "
+                     "WHERE user_id = ?",
+                     (json.dumps(advice, ensure_ascii=False), time.time(),
+                      json.dumps(model), user_id))

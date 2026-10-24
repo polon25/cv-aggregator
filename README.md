@@ -192,6 +192,19 @@ teraz", or saving "Czego szukam"):
    ("Pokaż słabiej dopasowane oferty"). The candidate's profile is the system prompt, the
    same for all their offers, so models that cache read it for a tenth.
 
+## What to learn
+
+The profile page's "Kierunki rozwoju" ([market.py](market.py), no model):
+the skills the offers kept for the user ask for, each offer weighing as
+much as it fits (its score less unmet wishes, or its prescore until
+rated; skills only wished for count half), split into the ones the
+candidate lacks (asked by two offers at least) and the ones they have.
+Forms of one skill count as one ("NI TestStand" as "TestStand"), tags
+that name no skill ("Testing", "Software") are left out, the candidate's
+languages count as theirs. A model then writes 3–5 steps to take
+(`agents.advise`), from those numbers and what it found missing in the
+best offers – on request, and once a day after offers are rated.
+
 ## Portals
 
 Every portal is a JSON file in [portals/](portals/) – or in `PORTALS_DIR`

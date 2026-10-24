@@ -26,7 +26,9 @@ reply is JSON (but uploads and downloads of CV files); errors are
     GET  /api/schema           the profile's fields and sections
     GET  /api/profile          the user's CVs, their merged profile, what
                                the program counted, their description, the
-                               analysis and whether it's still up to date
+                               analysis and whether it's still up to date,
+                               what the offers kept for them ask (market)
+                               and advice on what to learn (growth)
     POST /api/profile/about    {about}: the user's own description
     POST /api/profile/personal {field: value}: personal details; a value
                                null goes back to what the CVs say
@@ -39,6 +41,8 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/profile/removed/<section>/<id>/restore
                                brings back what was deleted
     POST /api/profile/analysis has a new analysis written
+    POST /api/profile/growth   has advice on what to learn written, from
+                               the offers kept for the user (market.py)
     GET  /api/offers           what the user looks for (and the form's
                                choices), what's searched for, whether a
                                search is going on, the day's ratings, and
@@ -83,6 +87,7 @@ import db
 import documents
 import importer
 import llm
+import market
 import matching
 import offers
 import portals
@@ -192,9 +197,15 @@ def _profile_json(conn, user):
             "stale": bool(row["analysis"]) and
             row["analysis_of"] != candidate.fingerprint(text),
         },
+        "market": market.demand(conn, user["id"], profile, row["wishes"]),
+        "growth": {"status": row["growth_status"],
+                   "error": row["growth_error"], "result": row["growth"],
+                   "at": row["growth_at"],
+                   "model": (row["growth_model"] or {}).get("model")},
         "empty": not text,
         "busy": any(c["status"] in ("pending", "working") for c in cvs) or
-        status in ("pending", "working"),
+        status in ("pending", "working") or
+        row["growth_status"] in ("pending", "working"),
     }
 
 
@@ -428,6 +439,11 @@ class Handler(SimpleHTTPRequestHandler):
         if action == "about":
             db.save_about(conn, user["id"], body.get("about"))
             return _profile_json(conn, user)
+        if action == "growth":
+            self._can_review(conn, user)
+            db.request_growth(conn, user["id"])
+            worker.wake()
+            return _profile_json(conn, user)
         if action == "analysis":
             profile, row, _ = db.built_profile(conn, user["id"])
             if not db.profile_text(profile, row):
@@ -595,6 +611,8 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if length > largest:
             raise HttpError(413, "Za duże zapytanie.")
+        if not length:  # a button that has nothing to say
+            return {}
         if "application/json" not in self.headers.get("Content-Type", ""):
             raise HttpError(415, "Oczekiwano JSON.")
         try:

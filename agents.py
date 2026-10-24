@@ -400,3 +400,59 @@ def read_page(text, title, posting, selected, account):
     offer, _, model = llm.ask_json(messages, "read offer", validate, account,
                                    think=False)
     return offer, model
+
+
+ADVISE = """Jesteś doradcą kariery. Na podstawie profilu kandydata i tego, \
+czego wymagają oferty pracy, które do niego pasują (policzone przez program: \
+ile ofert prosi o daną umiejętność), oraz braków, które rekruter wskazał przy \
+najlepszych ofertach, doradź mu, w co warto zainwestować czas, żeby dostać \
+lepsze z tych ofert. Opieraj się na liczbach: najpierw to, o co prosi \
+najwięcej ofert i czego kandydatowi brakuje; pomiń rzeczy, które ma. Bądź \
+konkretny (nazwy technologii, rodzaj projektu, certyfikat), realistyczny \
+co do czasu i krótki.
+
+Odpowiedz wyłącznie obiektem JSON:
+{"summary": "1–2 zdania: najważniejszy wniosek", "steps": [{"title": "czego \
+się nauczyć / co zrobić", "why": "dlaczego: ile ofert tego chce, które", \
+"how": "jak: konkretny pierwszy krok, np. projekt do portfolio, kurs, \
+certyfikat"}]}
+
+3–5 kroków, od najważniejszego."""
+
+
+def _validate_advice(answer):
+    summary = candidate.clean_text(answer.get("summary"), 1000)
+    steps = []
+    for step in answer.get("steps") or []:
+        if isinstance(step, dict) and candidate.clean_text(step.get("title"),
+                                                           200):
+            steps.append({key: candidate.clean_text(step.get(key), 800)
+                          for key in ("title", "why", "how")})
+    if not summary or not steps:
+        raise ValueError("no summary or steps")
+    return {"summary": summary, "steps": steps[:6]}
+
+
+def advise(profile_text, demand, cons, account):
+    """(advice: {summary, steps: [{title, why, how}]}, who answered) on
+    what to learn, from what the offers kept for the candidate ask
+    (market.demand) and what the model found missing in the best of them
+    (market.cons)."""
+    def listing(items):
+        return "\n".join("- %s: %d ofert (%d%%), np. %s" % (
+            i["name"], i["offers"], round(i["share"] * 100),
+            "; ".join(i["examples"][:2])) for i in items) or "(brak)"
+    facts = ("Policzone oferty: %d\n\nCzego chcą oferty, a kandydat tego nie "
+             "ma:\n%s\n\nCzego chcą oferty i kandydat to ma:\n%s\n\nBraki "
+             "wskazane przy najlepszych ofertach:\n%s" % (
+                 demand["offers"], listing(demand["missing"]),
+                 listing(demand["have"][:8]),
+                 "\n".join("- " + c for c in cons) or "(brak)"))
+    messages = [
+        {"role": "system", "content": ADVISE},
+        {"role": "user", "content": "<profil>\n%s\n</profil>\n\n%s"
+         % (profile_text, facts)},
+    ]
+    advice, _, model = llm.ask_json(messages, "advise", _validate_advice,
+                                    account)
+    return advice, model

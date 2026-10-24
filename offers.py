@@ -36,6 +36,7 @@ import importer
 import llm
 import matching
 import portals
+import worker
 
 log = logging.getLogger("offers")
 
@@ -307,3 +308,8 @@ def review(conn, user_id, profile, row):
             continue
         db.save_review(conn, user_id, offer["offer_id"], result, model)
     log.info("User %d: %d offers reviewed", user_id, len(queue))
+    # advice on what to learn, from what the offers ask, once a day
+    if not row["growth_at"] or time.time() - row["growth_at"] > 86400:
+        if row["growth_status"] not in ("pending", "working"):
+            db.request_growth(conn, user_id)
+            worker.wake()

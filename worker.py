@@ -6,7 +6,9 @@ called when there's new work.
 A CV is read in two steps: its text, by the program (documents.py), then
 its contents, by a model (agents.read_cv) told what the profile has from
 the user's other CVs. Once a user's last waiting CV is read, their profile
-gets a new analysis.
+gets a new analysis. Advice on what to learn (market.py, agents.advise) is
+written here too, when asked for (offers.py asks once a day, after rating
+offers).
 """
 
 import logging
@@ -18,6 +20,7 @@ import config
 import db
 import documents
 import llm
+import market
 
 log = logging.getLogger("worker")
 
@@ -66,11 +69,15 @@ def _work_once():
         with _claim:
             cv = db.claim_cv(conn)
             user_id = None if cv else db.claim_analysis(conn)
+            growth = None if cv or user_id else db.claim_growth(conn)
         if cv:
             read_cv(conn, cv)
             return True
         if user_id:
             analyze(conn, user_id)
+            return True
+        if growth:
+            advise(conn, growth)
             return True
         return False
     finally:
@@ -124,6 +131,27 @@ def _after_cv(conn, user_id):
             c["extraction"] for c in db.user_cvs(conn, user_id)):
         db.request_analysis(conn, user_id)
         wake()
+
+
+def advise(conn, user_id):
+    """Advice on what to learn, from the offers kept for the user
+    (market.py)."""
+    profile, row, _ = db.built_profile(conn, user_id)
+    demand = market.demand(conn, user_id, profile, row["wishes"])
+    if not demand["offers"]:
+        db.finish_growth(conn, user_id, error="Nie ma jeszcze ofert, z których "
+                         "można by wyciągnąć wnioski.")
+        return
+    account = db.account(conn, user_id)
+    log.info("Advising user %d from %d offers", user_id, demand["offers"])
+    try:
+        advice, model = agents.advise(db.profile_text(profile, row), demand,
+                                      market.cons(conn, user_id), account)
+    except llm.LLMError as e:
+        log.warning("Advice for user %d failed: %s", user_id, e)
+        db.finish_growth(conn, user_id, error=_error(e, account))
+        return
+    db.finish_growth(conn, user_id, advice, model)
 
 
 def analyze(conn, user_id):

@@ -381,7 +381,7 @@ def _dated_match(a, b, place, what):
     return None
 
 
-def _name_key(section, name):
+def name_key(section, name):
     key = normalize(name)
     if section == "languages":
         key = LANGUAGE_NAMES.get(key.split(" ")[0], key.split(" ")[0]) \
@@ -407,7 +407,7 @@ def match(section, a, b):
         s = _sim(a.get("name"), b.get("name"))
         return s if s >= 0.8 else None
     if section in ("skills", "languages", "interests"):
-        if _name_key(section, a["name"]) == _name_key(section, b["name"]):
+        if name_key(section, a["name"]) == name_key(section, b["name"]):
             return 2.0
         s = _sim(a["name"], b["name"])
         return s if s >= 0.92 and section != "skills" else None

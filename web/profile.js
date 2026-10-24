@@ -156,16 +156,18 @@ class ProfileView {
       this.head = el("div", {});
       this.cvPanel = el("section", { class: "panel" });
       this.analysisPanel = el("section", { class: "panel" });
+      this.growthPanel = el("section", { class: "panel growth" });
       this.aboutPanel = el("section", { class: "panel" });
       this.personalPanel = el("section", { class: "panel" });
       this.sections = el("div", { class: "stack" });
       this.page = el("div", { class: "stack" }, this.head, this.cvPanel, this.analysisPanel,
-                     this.aboutPanel, this.personalPanel, this.sections);
+                     this.growthPanel, this.aboutPanel, this.personalPanel, this.sections);
       show(this.page);
     }
     this.renderHead();
     this.renderCvs();
     this.renderAnalysis();
+    this.renderGrowth();
     if (!this.dirty) this.renderAbout();
     this.renderPersonal();
     this.renderSections();
@@ -336,6 +338,43 @@ class ProfileView {
           p.roles.length > 0 && el("div", { class: "tags" }, p.roles.map((t) => el("span", { class: "tag-chip" }, t))),
           p.keywords.length > 0 && el("p", { class: "muted small" }, "Słowa kluczowe: " + p.keywords.join(", "))))),
         el("p", { class: "muted small" }, "Przygotowano " + fmtTime(a.at) + (a.model ? " · " + a.model : ""))));
+  }
+
+  // --- what the offers ask, and advice on what to learn
+
+  renderGrowth() {
+    const m = this.data.market;
+    const g = this.data.growth;
+    const r = g.result;
+    const working = g.status === "pending" || g.status === "working";
+    const skill = (i, cls) => el("span", {
+      class: "tag-chip " + cls, title: "Np. " + i.examples.join("; "),
+    }, i.name, el("span", { class: "level" }, i.offers + " ofert · " + Math.round(i.share * 100) + "%"));
+    fill(this.growthPanel,
+      el("div", { class: "section-head" }, el("h2", {}, "Kierunki rozwoju"),
+        m.offers > 0 && el("button", {
+          class: "btn small" + (r ? "" : " primary"), type: "button", disabled: working,
+          onclick: () => this.act("POST", "profile/growth").catch((e) => alert(e.message)),
+        }, r ? "Przygotuj ponownie" : "Przygotuj wskazówki")),
+      m.offers === 0 ? el("p", { class: "muted" }, "Gdy w zakładce Oferty zbiorą się pasujące oferty, pokażę tu, " +
+        "czego wymagają najczęściej i w co warto się rozwijać.")
+        : [
+          el("p", { class: "hint" }, "Z " + m.offers + " ofert, które pasują do tego, czego szukasz (ważonych " +
+            "dopasowaniem). Najedź na umiejętność, żeby zobaczyć przykładowe oferty."),
+          m.missing.length > 0 && [el("h3", {}, "Czego oferty chcą, a tego nie masz"),
+            el("div", { class: "tags" }, m.missing.map((i) => skill(i, "lack")))],
+          m.have.length > 0 && [el("h3", {}, "Co masz, a oferty tego chcą"),
+            el("div", { class: "tags" }, m.have.map((i) => skill(i, "have")))],
+          working && el("p", { class: "thinking dots" }, "Model pisze wskazówki"),
+          g.status === "failed" && el("p", { class: "bad" }, "⚠ " + g.error),
+          r && el("div", { class: "analysis advice" },
+            el("p", { class: "summary" }, r.summary),
+            el("ol", { class: "points" }, r.steps.map((s) => el("li", {},
+              el("b", {}, s.title), s.why && el("div", {}, s.why),
+              s.how && el("div", { class: "muted" }, "Jak: " + s.how)))),
+            el("p", { class: "muted small" }, "Przygotowano " + fmtTime(g.at) + (g.model ? " · " + g.model : "") +
+              "; odświeżane raz dziennie po ocenie nowych ofert.")),
+        ]);
   }
 
   // --- the user's own words
