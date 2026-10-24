@@ -103,9 +103,6 @@ PORTALS_DIR = os.getenv("PORTALS_DIR") or os.path.join(DATA_DIR, "portals")
 OFFERS_INTERVAL = float(os.getenv("OFFERS_INTERVAL") or "6")
 # Seconds at least between two requests to the same portal.
 PORTAL_DELAY = float(os.getenv("PORTAL_DELAY") or "3")
-# Search terms a user's wishes give at most (each is searched on every
-# portal).
-OFFERS_MAX_TERMS = int(os.getenv("OFFERS_MAX_TERMS") or "12")
 # Offers a model rates for a user a day, unless the user sets their own.
 OFFERS_DAILY_REVIEWS = int(os.getenv("OFFERS_DAILY_REVIEWS") or "30")
 # The most a user may set.

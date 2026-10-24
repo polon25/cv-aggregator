@@ -71,7 +71,6 @@ Settings (`.env`, see [.env.example](.env.example)):
 | `PORTALS_DIR` | `data/portals` | more portals, a JSON file each, beside those in `portals/` (one of the same id replaces it); see "Portals" |
 | `OFFERS_INTERVAL` | 6 | hours between searches for a user (a portal searched for a term less than this ago, for anyone, isn't asked again) |
 | `PORTAL_DELAY` | 3 | seconds at least between two requests to the same portal |
-| `OFFERS_MAX_TERMS` | 12 | search terms a user's wishes give at most |
 | `OFFERS_DAILY_REVIEWS` | 30 | offers a model rates for a user a day, until they set their own number in the settings |
 | `OFFERS_MAX_REVIEWS` | 200 | the most a user may set |
 | `OFFER_DAYS` | 7 | an offer not seen on its portal for this long is taken as gone (and forgotten after twice that, unless marked) |
@@ -155,9 +154,9 @@ weren't looked for in `OFFERS_INTERVAL` hours, or who asked ("Szukaj
 teraz", or saving "Czego szukam"):
 
 1. **Searching** ([portals.py](portals.py)): every chosen portal is
-   searched for every term – the user's keywords and roles by turns (at
-   most `OFFERS_MAX_TERMS`), or, until they write any, those of the
-   analysis' best career paths. Results are shared
+   searched for every term – each of the user's keywords and roles, or,
+   until they write any, those of the analysis' best career paths (a
+   term takes a request on each portal, `PORTAL_DELAY` seconds apart). Results are shared
    by all users: a portal searched for a term lately isn't asked again.
 2. **Sifting** ([matching.py](matching.py), no model): an offer is ruled
    out by a contract the user didn't choose or a word to avoid in its

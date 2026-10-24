@@ -23,7 +23,6 @@ for unmet wishes are taken off by the program.
 import re
 
 import candidate
-import config
 import portals
 
 MODES = [("remote", "zdalnie"), ("hybrid", "hybrydowo"),
@@ -35,7 +34,7 @@ LEVELS = [("intern", "staż / praktyki"), ("junior", "junior"),
           ("lead", "lead / ekspert / kierownik")]
 LISTS = ("roles", "keywords", "cities", "avoid")
 CHOICES = {"modes": MODES, "contracts": CONTRACTS, "levels": LEVELS}
-MAX_ENTRIES = 20
+MAX_ENTRIES = 50  # in a list of the form: a guard, not a limit to plan by
 MAX_ENTRY = 80
 # Rough złoty rates, for pay in other currencies against the user's least.
 RATES = {"PLN": 1, "EUR": 4.3, "USD": 4.0, "GBP": 5.0, "CHF": 4.5}
@@ -140,9 +139,9 @@ def describe(wishes, text="", criteria=True):
 
 
 def terms(wishes, analysis):
-    """What to search the portals for, at most OFFERS_MAX_TERMS: the
-    user's keywords and roles, by turns (the first of each first); with
-    neither, the roles and keywords of the analysis' best career paths."""
+    """What to search the portals for: the user's keywords and roles, by
+    turns (the first of each first), each once; with neither, the roles
+    and keywords of the analysis' best career paths."""
     keywords, roles = wishes.get("keywords") or [], wishes.get("roles") or []
     found = [term for pair in zip(keywords, roles) for term in pair] + \
         keywords[len(roles):] + roles[len(keywords):]
@@ -160,7 +159,7 @@ def terms(wishes, analysis):
         if term and key and key not in seen:
             seen.add(key)
             out.append(term)
-    return out[:config.OFFERS_MAX_TERMS]
+    return out
 
 
 # --- judging an offer by what's known of it ------------------------------

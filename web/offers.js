@@ -216,7 +216,8 @@ class OffersView {
       },
     },
       el("p", { class: "hint" }, "Na tej podstawie przeszukiwane są portale i wybierane oferty. Puste pole – bez " +
-        "ograniczeń. Z każdego wiersza stanowisk i słów kluczowych powstaje fraza do wyszukania (najwyżej 8)."),
+        "ograniczeń. Każdy wiersz stanowisk i słów kluczowych to osobna fraza, szukana na każdym wybranym portalu: " +
+        "im więcej fraz, tym więcej ofert, ale i dłuższe wyszukiwanie w tle (kilka sekund na frazę i portal)."),
       d.suggestions.length > 0 && el("div", { class: "suggestions" },
         el("span", { class: "muted small" }, "Podpowiedzi z analizy profilu (kliknij, by dodać):"),
         el("div", { class: "tags" }, d.suggestions.map((s) => el("button", {
