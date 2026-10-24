@@ -128,7 +128,7 @@ def _after_cv(conn, user_id):
 
 def analyze(conn, user_id):
     profile, row, _ = db.built_profile(conn, user_id)
-    text = candidate.text(profile, row["about"], row["goals"])
+    text = db.profile_text(profile, row)
     if not text:
         db.finish_analysis(conn, user_id, error="Profil jest pusty: wgraj CV "
                            "albo uzupełnij go ręcznie.")

@@ -92,3 +92,24 @@ MAX_CV_MB = float(os.getenv("MAX_CV_MB") or "5")
 MAX_CV_CHARS = int(os.getenv("MAX_CV_CHARS") or "40000")
 # Background threads reading CVs and writing analyses.
 WORKERS = int(os.getenv("WORKERS") or "2")
+
+# --- job offers -------------------------------------------------------------
+
+# The portals searched (see portals.py), comma-separated.
+PORTALS = _list("PORTALS") or ["justjoin", "rocketjobs", "nofluffjobs",
+                               "bulldogjob"]
+# Hours between two searches of the portals.
+OFFERS_INTERVAL = float(os.getenv("OFFERS_INTERVAL") or "6")
+# Seconds at least between two requests to the same portal.
+PORTAL_DELAY = float(os.getenv("PORTAL_DELAY") or "3")
+# Search terms a user's wishes give at most (each is searched on every
+# portal).
+OFFERS_MAX_TERMS = int(os.getenv("OFFERS_MAX_TERMS") or "8")
+# Offers a model rates for a user a day, unless the user sets their own.
+OFFERS_DAILY_REVIEWS = int(os.getenv("OFFERS_DAILY_REVIEWS") or "30")
+# The most a user may set.
+OFFERS_MAX_REVIEWS = int(os.getenv("OFFERS_MAX_REVIEWS") or "200")
+# An offer not seen on its portal for this many days is taken as gone.
+OFFER_DAYS = int(os.getenv("OFFER_DAYS") or "7")
+# An offer's text is cut to this many characters for the model.
+OFFER_MAX_CHARS = int(os.getenv("OFFER_MAX_CHARS") or "12000")

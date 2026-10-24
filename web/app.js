@@ -1,12 +1,15 @@
 "use strict";
-// The app's page: logging in and the user's profile (profile.js). Talks to
-// the JSON API in web_server.py.
+// The app's page: logging in, the user's profile (profile.js) and the job
+// offers found for them (offers.js). Talks to the JSON API in
+// web_server.py.
 
 const app = document.getElementById("app");
 const account = document.getElementById("account");
+const nav = document.getElementById("nav");
+const PAGES = [["#/", "Profil", () => new ProfileView()], ["#/oferty", "Oferty", () => new OffersView()]];
 let schema = null;
 let me = null;
-let view = null; // the open page with something to stop: ProfileView
+let view = null; // the open page: ProfileView or OffersView
 
 // --- helpers ------------------------------------------------------------
 
@@ -75,7 +78,14 @@ function fmtSpan(item) {
   return start || end;
 }
 
+function renderNav() {
+  const here = PAGES.find(([hash]) => hash === location.hash) || PAGES[0];
+  fill(nav, me && PAGES.map(([hash, label]) =>
+    el("a", { href: hash, class: hash === here[0] ? "active" : null }, label)));
+}
+
 function renderAccount() {
+  renderNav();
   if (!me) return account.replaceChildren();
   account.replaceChildren(
     el("span", {}, me.user.username),
@@ -175,8 +185,10 @@ async function loadMe() {
 function route() {
   if (view) view.stop();
   view = null;
+  renderNav();
   if (!me) return showLogin("login");
-  view = new ProfileView();
+  const page = PAGES.find(([hash]) => hash === location.hash) || PAGES[0];
+  view = page[2]();
   view.start();
 }
 

@@ -9,11 +9,23 @@
     cvs         a user's uploaded CV: file name, kind, its text, and what a
                 model read from it (status: pending, working, done,
                 failed)
-    profiles    a user's profile: their own description and what they look
-                for, their changes to what the CVs say (see candidate.py),
-                and the analysis a model wrote of the profile (status as
-                for CVs; `analysis_of`: the fingerprint of the profile it
-                was written from)
+    profiles    a user's profile: their own description, what they look
+                for (`wishes`, see matching.py, and `goals`, in their own
+                words), their changes to what the CVs say (see
+                candidate.py), the analysis a model wrote of the profile
+                (status as for CVs; `analysis_of`: the fingerprint of the
+                profile it was written from), when their offers were last
+                looked for and whether they asked for it now
+    offers      job offers found on the portals (see portals.py), shared
+                by all users: what the portal's list says (JSON), when it
+                was first and last seen there, and its full text once it
+                was needed
+    searches    when a portal was last searched for a term, with what came
+                of it
+    matches     an offer kept for a user: how promising it looked to the
+                program (`prescore`), what a model made of it (`review`,
+                with `score` 0..100), and the user's mark: new,
+                interested, applied or rejected
 """
 
 import hashlib
@@ -27,6 +39,7 @@ import time
 
 import candidate
 import config
+import matching
 import vault
 
 SCHEMA = """
@@ -40,7 +53,8 @@ CREATE TABLE IF NOT EXISTS users (
     paid_models TEXT,                    -- JSON list; NULL: the defaults
     free_models TEXT,
     use_paid INTEGER,                    -- NULL: the default
-    use_free INTEGER                     -- NULL: the default
+    use_free INTEGER,                    -- NULL: the default
+    daily_reviews INTEGER                -- offers rated a day; NULL: default
 );
 CREATE TABLE IF NOT EXISTS logins (
     token_hash TEXT PRIMARY KEY,
@@ -75,11 +89,54 @@ CREATE TABLE IF NOT EXISTS profiles (
     analysis_error TEXT,
     analysis_of TEXT,                    -- the profile's fingerprint
     analysis_model TEXT,                 -- JSON: who wrote it
-    analysis_at REAL
+    analysis_at REAL,
+    wishes TEXT,                         -- JSON, see matching.py
+    offers_at REAL,                      -- offers last looked for
+    offers_wanted INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS offers (
+    id INTEGER PRIMARY KEY,
+    portal TEXT NOT NULL,
+    key TEXT NOT NULL,                   -- the portal's id
+    url TEXT NOT NULL,
+    data TEXT NOT NULL,                  -- JSON, see portals.py
+    first_seen REAL NOT NULL,
+    last_seen REAL NOT NULL,
+    details TEXT,                        -- the full text, once fetched
+    details_at REAL,
+    UNIQUE (portal, key)
+);
+CREATE INDEX IF NOT EXISTS offers_by_time ON offers (last_seen);
+CREATE TABLE IF NOT EXISTS searches (
+    portal TEXT NOT NULL,
+    term TEXT NOT NULL,                  -- casefolded
+    searched_at REAL NOT NULL,
+    found INTEGER,
+    error TEXT,
+    PRIMARY KEY (portal, term)
+);
+CREATE TABLE IF NOT EXISTS matches (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    offer_id INTEGER NOT NULL REFERENCES offers(id),
+    created_at REAL NOT NULL,
+    prescore REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',  -- new, interested, applied, rejected
+    wanted INTEGER NOT NULL DEFAULT 0,   -- the user asked for a review
+    score INTEGER,                       -- 0..100 by the model
+    review TEXT,                         -- JSON, see agents.review_offer
+    review_error TEXT,
+    model TEXT,                          -- JSON: who reviewed it
+    reviewed_at REAL,
+    PRIMARY KEY (user_id, offer_id)
+);
+CREATE INDEX IF NOT EXISTS matches_by_review ON matches (user_id, reviewed_at);
 """
 
-ADDED_COLUMNS = (("users", "use_free", "INTEGER"),)
+ADDED_COLUMNS = (
+    ("users", "use_free", "INTEGER"), ("users", "daily_reviews", "INTEGER"),
+    ("profiles", "wishes", "TEXT"), ("profiles", "offers_at", "REAL"),
+    ("profiles", "offers_wanted", "INTEGER NOT NULL DEFAULT 0"),
+)
 
 USERNAME_RE = re.compile(r"[\w.\-]{3,32}")
 MIN_PASSWORD = 6
@@ -417,7 +474,12 @@ def _profile_row(row, user_id):
                 "overrides": candidate.empty_overrides(), "analysis": None,
                 "analysis_status": None, "analysis_error": None,
                 "analysis_of": None, "analysis_model": None,
-                "analysis_at": None, "updated_at": None}
+                "analysis_at": None, "updated_at": None,
+                "wishes": matching.empty(), "offers_at": None,
+                "offers_wanted": 0}
+    wishes = matching.empty()
+    wishes.update(json.loads(row["wishes"] or "{}"))
+    row["wishes"] = wishes
     overrides = candidate.empty_overrides()
     overrides.update(json.loads(row["overrides"] or "{}"))
     row["overrides"] = overrides
@@ -441,6 +503,13 @@ def built_profile(conn, user_id):
     return candidate.build(cvs, row["overrides"]), row, cvs
 
 
+def profile_text(profile, row):
+    """The profile as text for a model (candidate.text), with what the
+    user wrote of themselves and what they look for."""
+    return candidate.text(profile, row["about"], matching.describe(
+        row["wishes"], row["goals"]))
+
+
 def _ensure_profile(conn, user_id):
     conn.execute("INSERT OR IGNORE INTO profiles (user_id, updated_at) "
                  "VALUES (?, ?)", (user_id, time.time()))
@@ -455,12 +524,23 @@ def save_overrides(conn, user_id, overrides):
                       user_id))
 
 
-def save_about(conn, user_id, about, goals):
+def save_about(conn, user_id, about):
     with conn:
         _ensure_profile(conn, user_id)
-        conn.execute("UPDATE profiles SET about = ?, goals = ?, "
-                     "updated_at = ? WHERE user_id = ?",
+        conn.execute("UPDATE profiles SET about = ?, updated_at = ? "
+                     "WHERE user_id = ?",
                      (str(about or "").strip()[:candidate.MAX_ABOUT],
+                      time.time(), user_id))
+
+
+def save_wishes(conn, user_id, wishes, goals):
+    """What the user looks for (matching.clean()'s) and, in their own
+    words, `goals`; their offers are looked for again soon."""
+    with conn:
+        _ensure_profile(conn, user_id)
+        conn.execute("UPDATE profiles SET wishes = ?, goals = ?, "
+                     "offers_wanted = 1, updated_at = ? WHERE user_id = ?",
+                     (json.dumps(wishes, ensure_ascii=False),
                       str(goals or "").strip()[:candidate.MAX_ABOUT],
                       time.time(), user_id))
 
@@ -505,3 +585,225 @@ def finish_analysis(conn, user_id, analysis=None, fingerprint=None,
             "analysis_model = ?, analysis_at = ? WHERE user_id = ?",
             (json.dumps(analysis, ensure_ascii=False), fingerprint,
              json.dumps(model), time.time(), user_id))
+
+
+# --- offers ---------------------------------------------------------------
+
+def set_daily_reviews(conn, user_id, count):
+    with conn:
+        conn.execute("UPDATE users SET daily_reviews = ? WHERE id = ?",
+                     (count, user_id))
+
+
+def daily_reviews(conn, user_id):
+    row = conn.execute("SELECT daily_reviews FROM users WHERE id = ?",
+                       (user_id,)).fetchone()
+    value = row and row["daily_reviews"]
+    return config.OFFERS_DAILY_REVIEWS if value is None else value
+
+
+def want_offers(conn, user_id):
+    """The user asked for their offers to be looked for now."""
+    with conn:
+        _ensure_profile(conn, user_id)
+        conn.execute("UPDATE profiles SET offers_wanted = 1 WHERE "
+                     "user_id = ?", (user_id,))
+
+
+def users_due(conn, before):
+    """Users whose offers were last looked for before `before`, or who
+    asked for it, and who have a profile to look with."""
+    return [r["user_id"] for r in conn.execute(
+        "SELECT user_id FROM profiles WHERE offers_wanted = 1 OR "
+        "offers_at IS NULL OR offers_at < ? ORDER BY offers_wanted DESC, "
+        "offers_at", (before,))]
+
+
+def offers_done(conn, user_id):
+    with conn:
+        conn.execute("UPDATE profiles SET offers_at = ?, offers_wanted = 0 "
+                     "WHERE user_id = ?", (time.time(), user_id))
+
+
+def searched_at(conn, portal, term):
+    row = conn.execute("SELECT searched_at FROM searches WHERE portal = ? "
+                       "AND term = ?", (portal, term.casefold())).fetchone()
+    return row["searched_at"] if row else None
+
+
+def record_search(conn, portal, term, found=None, error=None):
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO searches VALUES (?, ?, ?, ?, ?)",
+                     (portal, term.casefold(), time.time(), found, error))
+
+
+def save_offers(conn, offers):
+    """Keeps offers a portal listed (new ones added, known ones updated,
+    their text kept)."""
+    now = time.time()
+    with conn:
+        for o in offers:
+            data = json.dumps({k: v for k, v in o.items()
+                               if k not in ("portal", "key", "url")},
+                              ensure_ascii=False)
+            conn.execute(
+                "INSERT INTO offers (portal, key, url, data, first_seen, "
+                "last_seen) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (portal, "
+                "key) DO UPDATE SET url = excluded.url, data = excluded.data, "
+                "last_seen = excluded.last_seen",
+                (o["portal"], str(o["key"]), o["url"], data, now, now))
+
+
+def _offer_row(row):
+    if row:
+        data = json.loads(row.pop("data"))
+        row.update(data)
+    return row
+
+
+def recent_offers(conn, since):
+    """Offers seen on their portals since `since`."""
+    return [_offer_row(r) for r in conn.execute(
+        "SELECT id, portal, key, url, data, first_seen, last_seen FROM "
+        "offers WHERE last_seen >= ?", (since,))]
+
+
+def offer_details(conn, offer_id):
+    row = conn.execute("SELECT details FROM offers WHERE id = ?",
+                       (offer_id,)).fetchone()
+    return row and row["details"]
+
+
+def save_offer_details(conn, offer_id, text):
+    with conn:
+        conn.execute("UPDATE offers SET details = ?, details_at = ? WHERE "
+                     "id = ?", (text, time.time(), offer_id))
+
+
+def matched_ids(conn, user_id):
+    return {r["offer_id"] for r in conn.execute(
+        "SELECT offer_id FROM matches WHERE user_id = ?", (user_id,))}
+
+
+def add_matches(conn, user_id, scored):
+    """[(offer id, prescore)] kept for the user."""
+    now = time.time()
+    with conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO matches (user_id, offer_id, created_at, "
+            "prescore) VALUES (?, ?, ?, ?)",
+            [(user_id, offer_id, now, score) for offer_id, score in scored])
+
+
+def _match_row(row):
+    row = _offer_row(row)
+    for key in ("review", "model"):
+        row[key] = json.loads(row[key]) if row.get(key) else None
+    return row
+
+
+MATCH_COLUMNS = (
+    "m.offer_id, m.created_at, m.prescore, m.status, m.wanted, m.score, "
+    "m.review, m.review_error, m.model, m.reviewed_at, o.portal, o.url, "
+    "o.data, o.first_seen, o.last_seen")
+
+
+def user_matches(conn, user_id):
+    return [_match_row(r) for r in conn.execute(
+        "SELECT %s FROM matches m JOIN offers o ON o.id = m.offer_id WHERE "
+        "m.user_id = ? ORDER BY m.score DESC, m.prescore DESC"
+        % MATCH_COLUMNS, (user_id,))]
+
+
+def get_match(conn, user_id, offer_id):
+    row = conn.execute(
+        "SELECT %s FROM matches m JOIN offers o ON o.id = m.offer_id WHERE "
+        "m.user_id = ? AND m.offer_id = ?" % MATCH_COLUMNS,
+        (user_id, offer_id)).fetchone()
+    return _match_row(row) if row else None
+
+
+def reviews_since(conn, user_id, since):
+    """How many offers a model rated for the user since `since` (the
+    ones the user asked for aside)."""
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM matches WHERE user_id = ? AND "
+        "reviewed_at >= ? AND wanted = 0", (user_id, since)).fetchone()["n"]
+
+
+def to_review(conn, user_id, since, limit):
+    """The user's offers to be rated next: the ones they asked for, then
+    the most promising, seen on their portal since `since`, at most
+    `limit` of the latter."""
+    wanted = [_match_row(r) for r in conn.execute(
+        "SELECT %s FROM matches m JOIN offers o ON o.id = m.offer_id WHERE "
+        "m.user_id = ? AND m.wanted = 1 AND m.reviewed_at IS NULL"
+        % MATCH_COLUMNS, (user_id,))]
+    best = [_match_row(r) for r in conn.execute(
+        "SELECT %s FROM matches m JOIN offers o ON o.id = m.offer_id WHERE "
+        "m.user_id = ? AND m.wanted = 0 AND m.reviewed_at IS NULL AND "
+        "m.review_error IS NULL AND m.status = 'new' AND o.last_seen >= ? "
+        "ORDER BY m.prescore DESC LIMIT ?" % MATCH_COLUMNS,
+        (user_id, since, max(0, limit)))]
+    return wanted + best
+
+
+def save_review(conn, user_id, offer_id, review=None, model=None,
+                error=None):
+    with conn:
+        if error:
+            conn.execute("UPDATE matches SET review_error = ?, wanted = 0 "
+                         "WHERE user_id = ? AND offer_id = ?",
+                         (error, user_id, offer_id))
+            return
+        conn.execute(
+            "UPDATE matches SET review = ?, score = ?, model = ?, "
+            "reviewed_at = ?, review_error = NULL WHERE user_id = ? AND "
+            "offer_id = ?", (json.dumps(review, ensure_ascii=False),
+                             review["score"], json.dumps(model), time.time(),
+                             user_id, offer_id))
+
+
+def want_review(conn, user_id, offer_id):
+    with conn:
+        conn.execute("UPDATE matches SET wanted = 1, review_error = NULL "
+                     "WHERE user_id = ? AND offer_id = ?",
+                     (user_id, offer_id))
+
+
+def set_match_status(conn, user_id, offer_id, status):
+    with conn:
+        conn.execute("UPDATE matches SET status = ? WHERE user_id = ? AND "
+                     "offer_id = ?", (status, user_id, offer_id))
+
+
+def forget_offers(conn, before):
+    """Offers not seen since `before` that no user marked (as interesting
+    or applied to) go, with their matches."""
+    with conn:
+        conn.execute(
+            "DELETE FROM matches WHERE status IN ('new', 'rejected') AND "
+            "offer_id IN (SELECT id FROM offers WHERE last_seen < ?)",
+            (before,))
+        conn.execute(
+            "DELETE FROM offers WHERE last_seen < ? AND id NOT IN (SELECT "
+            "offer_id FROM matches)", (before,))
+
+
+def drop_matches(conn, user_id, offer_ids):
+    with conn:
+        conn.executemany("DELETE FROM matches WHERE user_id = ? AND "
+                         "offer_id = ?", [(user_id, i) for i in offer_ids])
+
+
+def rescore_matches(conn, user_id, scored):
+    with conn:
+        conn.executemany("UPDATE matches SET prescore = ? WHERE user_id = ? "
+                         "AND offer_id = ?",
+                         [(score, user_id, i) for i, score in scored])
+
+
+def users_wanting_reviews(conn):
+    return [r["user_id"] for r in conn.execute(
+        "SELECT DISTINCT user_id FROM matches WHERE wanted = 1 AND "
+        "reviewed_at IS NULL")]

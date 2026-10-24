@@ -128,6 +128,9 @@ async function settingsDialog() {
   const useFree = el("input", { type: "checkbox", id: "use-free" });
   const lastNote = el("p", { class: "model-last" }, "🔒 Na końcu zawsze: ", el("b", {}, settings.last),
     el("span", { class: "muted small" }, " – dowolny darmowy model, gdy żaden z powyższych nie odpowie."));
+  const dailyInput = el("input", { type: "number", id: "daily-reviews", min: 0, max: settings.max_reviews,
+                                   value: settings.daily_reviews });
+  dailyInput.addEventListener("change", () => send("settings/reviews", { daily: dailyInput.value }, modelsError));
   const noneNote = el("p", { class: "key-state warn" }, "⚠ Wszystkie modele są wyłączone: CV nie będą odczytywane.");
   const renderModelLists = () => {
     paid.set(settings.paid);
@@ -223,6 +226,10 @@ async function settingsDialog() {
       "wyłączone, CV nie zostanie im wysłane nigdy, nawet jeśli płatne zawiodą."),
     free.node, lastNote,
     noneNote,
+    el("label", { class: "reviews-row", for: "daily-reviews" }, el("b", {}, "Ocen ofert dziennie"),
+      el("span", { class: "option-hint" }, "Ile najbardziej obiecujących ofert model ocenia każdego dnia " +
+        "(ocena jednej to ułamek centa). Oferty, które ocenić każesz sam, nie wliczają się."),
+      dailyInput),
     modelsError,
     el("div", { class: "row end" }, modelsNote,
       el("button", {

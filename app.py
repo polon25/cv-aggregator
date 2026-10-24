@@ -1,7 +1,8 @@
-"""CV Aggregator: a candidate's profile gathered from all their CVs, and,
-next, job offers that fit it. The app's entry point: prepares the
+"""CV Aggregator: a candidate's profile gathered from all their CVs, and
+job offers from the portals that fit it. The app's entry point: prepares the
 database (db.py), starts the background workers reading CVs (worker.py)
-and serves the web page (web_server.py).
+and looking for offers (offers.py) and serves the web page
+(web_server.py).
 
     python3 app.py                         serve
     python3 app.py --add-user USER         make an account (the password is
@@ -23,6 +24,7 @@ import sys
 import config
 import db
 import llm
+import offers
 import web_server
 import worker
 
@@ -114,6 +116,7 @@ def main():
     if args.set_key:
         return set_key(args.set_key)
     worker.start(max(1, config.WORKERS))
+    offers.start()
     web_server.serve()
 
 

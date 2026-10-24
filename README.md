@@ -1,17 +1,29 @@
-# CV Aggregator – a candidate profile from all their CVs
+# CV Aggregator – job offers that fit a candidate
 
 A web app that gathers everything a candidate's CVs say into one profile,
-and (next) checks job offers on popular job portals for ones that fit it.
+and searches popular job portals for offers that fit it and what the
+candidate is looking for.
 
-For now: users log in and upload up to six CVs (PDF, DOCX, ODT, DOC, RTF or
+Users log in and upload up to six CVs (PDF, DOCX, ODT, DOC, RTF or
 TXT). A language model reads each into its parts – jobs, education,
 skills, languages, courses and certificates, projects, publications,
 awards, interests – and the app merges them into one profile: CVs tailored
 to different offers complement each other, and newer ones update older
 ones. The user can correct the profile, add to it and write about
-themselves and what they look for; a model then describes the candidate:
-a summary, strengths, weaknesses and possible career paths, with the roles
-and keywords to look for.
+themselves; a model then describes the candidate: a summary, strengths,
+weaknesses and possible career paths, with the roles and keywords to look
+for.
+
+On the offers page ("Oferty") they say what they look for: roles,
+keywords, cities and ways of working, the least pay, contracts, levels,
+words to avoid, portals, and in their own words. The app searches
+[JustJoin.it](https://justjoin.it), [RocketJobs](https://rocketjobs.pl),
+[No Fluff Jobs](https://nofluffjobs.com) and
+[Bulldogjob](https://bulldogjob.pl) every few hours, keeps the offers that
+may fit, and a model rates the most promising (0–100, with what fits and
+what's missing), as many a day as the user allows. Offers can be marked as
+interesting, applied for or rejected. (pracuj.pl and theprotocol.it turn
+programs away, and LinkedIn has no public job search; see "Portals".)
 
 Models think; the program does whatever it can do itself (see "How a
 profile is made"). Only the standard library is needed, plus `pdftotext`
@@ -55,6 +67,14 @@ Settings (`.env`, see [.env.example](.env.example)):
 | `MAX_CV_MB` | 5 | largest file accepted |
 | `MAX_CV_CHARS` | 40000 | a CV's text is cut to this many characters for the model |
 | `WORKERS` | 2 | threads reading CVs and writing analyses |
+| `PORTALS` | all four | the portals searched, comma-separated: `justjoin`, `rocketjobs`, `nofluffjobs`, `bulldogjob` |
+| `OFFERS_INTERVAL` | 6 | hours between searches for a user (a portal searched for a term less than this ago, for anyone, isn't asked again) |
+| `PORTAL_DELAY` | 3 | seconds at least between two requests to the same portal |
+| `OFFERS_MAX_TERMS` | 8 | search terms a user's wishes give at most |
+| `OFFERS_DAILY_REVIEWS` | 30 | offers a model rates for a user a day, until they set their own number in the settings |
+| `OFFERS_MAX_REVIEWS` | 200 | the most a user may set |
+| `OFFER_DAYS` | 7 | an offer not seen on its portal for this long is taken as gone (and forgotten after twice that, unless marked) |
+| `OFFER_MAX_CHARS` | 12000 | an offer's text is cut to this many characters for the model |
 | `LOG_LEVEL` | `INFO` | |
 
 `.env`, `secret.key` and `data/` stay on the server: they aren't in the
@@ -127,6 +147,51 @@ profile can be merged anew whenever a CV comes or goes:
 - personal details the user changed win over the CVs' ("przywróć z CV"
   goes back).
 
+## How offers are found
+
+[offers.py](offers.py) runs in the background; for each user whose offers
+weren't looked for in `OFFERS_INTERVAL` hours, or who asked ("Szukaj
+teraz", or saving "Czego szukam"):
+
+1. **Searching** ([portals.py](portals.py)): every chosen portal is
+   searched for every term – the user's keywords and roles, or, until they
+   write any, those of the analysis' best career paths. Results are shared
+   by all users: a portal searched for a term lately isn't asked again.
+2. **Sifting** ([matching.py](matching.py), no model): an offer is ruled
+   out by the wrong way of working or city (remote offers pass anywhere),
+   pay whose top is below the user's least (other currencies roughly in
+   złoty), the wrong contract or level, or a word to avoid in its title or
+   company; offers no portal says otherwise of pass. The rest get a score
+   0..1: the title against the roles sought (the share of their words it
+   has, whatever the inflection), the share of the offer's skills the
+   candidate has, keywords in the title. Promising ones are kept for the
+   user, once even when two portals list the same job; ones kept earlier
+   and not rated are judged again by the wishes as they are.
+3. **Rating** ([agents.py](agents.py), a model): the most promising, with
+   their full text from the portal, get a score 0–100, a summary, what
+   fits and what doesn't – up to the user's number a day, plus any they
+   asked for ("Oceń"). The candidate's profile is the system prompt, the
+   same for all their offers, so models that cache read it for a tenth.
+
+## Portals
+
+Pages are read as a browser gets them – no private API, nothing
+`robots.txt` disallows (no `/api/` paths) – by a client that says who it
+is (`CVAggregator/0.1 (...)`), a request every `PORTAL_DELAY` seconds at
+most per portal:
+
+| Portal | List | An offer |
+|---|---|---|
+| JustJoin.it, RocketJobs (one platform) | `?keyword=` search; 50 offers with company, pay, contracts, level, skills, in the page's Next.js flight data | JSON-LD `JobPosting` |
+| No Fluff Jobs | `?criteria=keyword=` search; 20 offers with company, pay, level, skills, in the page's state | the page's state: requirements, description, tasks |
+| Bulldogjob | `/s/skills,<term>`: by skill only (a term that isn't one of its skills finds nothing); 50 offers in `__NEXT_DATA__` | JSON-LD `JobPosting` |
+
+Not searched: pracuj.pl and theprotocol.it answer programs with a
+Cloudflare challenge (HTTP 403), which isn't to be got round; LinkedIn has
+no public job search API (its Job Posting API is for partners only) and
+its terms forbid scraping. Both send job alerts by e-mail, which may be
+read in a later version.
+
 ## Data
 
 `data/cv.db` (SQLite) and `data/cvs/<user id>/` (the uploaded files):
@@ -136,7 +201,10 @@ profile can be merged anew whenever a CV comes or goes:
 | `users` | username and PBKDF2-SHA256 password hash; the user's own OpenRouter key, encrypted, their lists of paid and free models and whether each may be used |
 | `logins` | login sessions (a 30-day cookie, stored as its SHA-256) |
 | `cvs` | a CV: file name, kind, size, SHA-256 (the same file can't be uploaded twice), its text and language, what the model read from it (JSON), status (`pending`, `working`, `done`, `failed`) and error, which model read it |
-| `profiles` | the user's own description and what they look for, their changes to the profile (JSON), the analysis (JSON) with its status, model, time and the fingerprint of the profile it was written from |
+| `profiles` | the user's own description, what they look for (`wishes`, JSON, and `goals`, their words), their changes to the profile (JSON), the analysis (JSON) with its status, model, time and the fingerprint of the profile it was written from, when their offers were last looked for and whether they asked for it |
+| `offers` | offers found, shared by all users: portal, its id, URL, what the list said (JSON), first and last seen, the full text once fetched |
+| `searches` | when a portal was last searched for a term, how many offers it gave or what went wrong |
+| `matches` | an offer kept for a user: the program's score, the user's mark (`new`, `interested`, `applied`, `rejected`), whether they asked for a rating, the model's score and review (JSON), who wrote it and when |
 
 ### API
 
@@ -150,9 +218,10 @@ profile can be merged anew whenever a CV comes or goes:
 | `POST /api/settings/key` | `{key}`: checked with OpenRouter, then kept; empty removes it |
 | `POST /api/settings/models` | `{paid, free}`: the user's own lists; `{reset: true}`: the defaults |
 | `POST /api/settings/use` | `{use_paid, use_free}` (either): whether paid, free models may be used |
+| `POST /api/settings/reviews` | `{daily}`: offers rated a day |
 | `GET /api/models` | OpenRouter's models with their prices |
 | `GET /api/profile` | CVs, the merged profile, what was counted, the user's description, the analysis (and whether it's out of date), whether anything is being worked on |
-| `POST /api/profile/about` | `{about, goals}` |
+| `POST /api/profile/about` | `{about}` |
 | `POST /api/profile/personal` | `{field: value}`; `null` goes back to the CVs' |
 | `POST /api/profile/items/<section>` | `{id, fields}`: the user's version of an item; no `id`: a new one |
 | `POST /api/profile/items/<section>/<id>/delete` | |
@@ -162,9 +231,14 @@ profile can be merged anew whenever a CV comes or goes:
 | `POST /api/cvs?name=<file name>` | the file as the body: uploads a CV |
 | `GET /api/cvs/<id>/file`, `GET /api/cvs/<id>/text` | the file, the text read from it |
 | `POST /api/cvs/<id>/delete`, `POST /api/cvs/<id>/retry` | |
+| `GET /api/offers` | what the user looks for and the form's choices, the terms searched, what's going on, the day's ratings, the offers kept with their reviews |
+| `POST /api/offers/wishes` | `{wishes, goals}`; offers are looked for again |
+| `POST /api/offers/search` | looks for offers now |
+| `POST /api/offers/<id>/status` | `{status}`: `new`, `interested`, `applied`, `rejected` |
+| `POST /api/offers/<id>/review` | has the offer rated now (not counted in the day's number) |
 
 Every `POST` on the profile and on CVs answers with the profile, as
-`GET /api/profile` does.
+`GET /api/profile` does; on offers, as `GET /api/offers` does.
 
 ## Licence
 

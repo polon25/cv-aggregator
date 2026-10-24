@@ -1,7 +1,7 @@
 "use strict";
 // The profile page: the user's CVs (uploading, what was read from each),
 // the analysis a model wrote of the candidate, what the user says of
-// themselves, and the profile merged from the CVs, section by section,
+// themselves (what they look for is on the offers page, offers.js), and the profile merged from the CVs, section by section,
 // which the user can correct: edit, add, delete and restore items. While a
 // CV is being read or the analysis written, the page asks for news every
 // few seconds. Uses the helpers of app.js (el, api, show...) and `schema`.
@@ -343,26 +343,22 @@ class ProfileView {
   renderAbout() {
     const about = el("textarea", { id: "about", rows: 4, maxlength: 6000,
       placeholder: "Kilka zdań o sobie: czego nie widać w CV, co lubisz robić, w czym chcesz się rozwijać…" });
-    const goals = el("textarea", { id: "goals", rows: 4, maxlength: 6000,
-      placeholder: "Stanowiska i branże, miasto albo praca zdalna, forma zatrudnienia, oczekiwania finansowe…" });
     about.value = this.data.about;
-    goals.value = this.data.goals;
     const note = el("span", { class: "muted small" }, this.aboutSaved ? "Zapisano." : "");
     this.aboutSaved = false;
     const save = el("button", { class: "btn primary", type: "submit", disabled: true }, "Zapisz");
     const changed = () => {
-      this.dirty = about.value !== this.data.about || goals.value !== this.data.goals;
+      this.dirty = about.value !== this.data.about;
       save.disabled = !this.dirty;
       note.textContent = "";
     };
     about.addEventListener("input", changed);
-    goals.addEventListener("input", changed);
     fill(this.aboutPanel, el("form", {
       onsubmit: async (e) => {
         e.preventDefault();
         save.disabled = true;
         try {
-          const data = await api("POST", "profile/about", { about: about.value, goals: goals.value });
+          const data = await api("POST", "profile/about", { about: about.value });
           this.dirty = false;
           this.aboutSaved = true;
           this.update(data);
@@ -373,10 +369,10 @@ class ProfileView {
         }
       },
     },
-      el("h2", {}, "O mnie i czego szukam"),
-      el("p", { class: "hint" }, "Twoimi słowami – analiza i dobór ofert biorą to pod uwagę."),
-      el("label", { for: "about" }, "O mnie"), about,
-      el("label", { for: "goals" }, "Czego szukam"), goals,
+      el("h2", {}, "O mnie"),
+      el("p", { class: "hint" }, "Twoimi słowami – analiza i ocena ofert biorą to pod uwagę. Czego szukasz, " +
+        "napiszesz w zakładce ", el("a", { href: "#/oferty" }, "Oferty"), "."),
+      about,
       el("div", { class: "row end" }, note, save)));
   }
 

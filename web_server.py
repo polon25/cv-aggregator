@@ -21,13 +21,13 @@ reply is JSON (but uploads and downloads of CV files); errors are
                                models; {reset: true}: the defaults again
     POST /api/settings/use     {use_paid, use_free} (either): whether the
                                paid models may be used, and the free ones
+    POST /api/settings/reviews {daily}: offers a model rates a day
     GET  /api/models           OpenRouter's models with their prices
     GET  /api/schema           the profile's fields and sections
     GET  /api/profile          the user's CVs, their merged profile, what
                                the program counted, their description, the
                                analysis and whether it's still up to date
-    POST /api/profile/about    {about, goals}: the user's own description
-                               and what they look for
+    POST /api/profile/about    {about}: the user's own description
     POST /api/profile/personal {field: value}: personal details; a value
                                null goes back to what the CVs say
     POST /api/profile/items/<section>
@@ -39,6 +39,18 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/profile/removed/<section>/<id>/restore
                                brings back what was deleted
     POST /api/profile/analysis has a new analysis written
+    GET  /api/offers           what the user looks for (and the form's
+                               choices), what's searched for, whether a
+                               search is going on, the day's ratings, and
+                               the offers kept for them with their reviews
+    POST /api/offers/wishes    {wishes, goals}: what the user looks for;
+                               offers are looked for again
+    POST /api/offers/search    has offers looked for now
+    POST /api/offers/<id>/status
+                               {status}: new, interested, applied, rejected
+    POST /api/offers/<id>/review
+                               has a model rate the offer (beyond the day's
+                               number)
     POST /api/cvs?name=<file name>
                                the file as the request body: uploads a CV,
                                which is then read in the background
@@ -62,6 +74,8 @@ import config
 import db
 import documents
 import llm
+import matching
+import offers
 import worker
 
 log = logging.getLogger("web")
@@ -90,6 +104,8 @@ def _settings_json(conn, user):
         "paid": account["paid"], "free": account["free"],
         "custom": account["custom"], "use_paid": account["use_paid"],
         "use_free": account["use_free"],
+        "daily_reviews": db.daily_reviews(conn, user["id"]),
+        "max_reviews": config.OFFERS_MAX_REVIEWS,
         "defaults": {"paid": config.OPENROUTER_PAID_MODELS,
                      "free": config.OPENROUTER_MODELS},
         "last": config.OPENROUTER_MODEL, "max": db.MAX_MODELS,
@@ -148,7 +164,7 @@ def _cv_json(cv):
 
 def _profile_json(conn, user):
     profile, row, cvs = db.built_profile(conn, user["id"])
-    text = candidate.text(profile, row["about"], row["goals"])
+    text = db.profile_text(profile, row)
     stats = candidate.stats(profile)
     stats["experience"] = candidate.years_months(stats["experience_months"])
     status = row["analysis_status"]
@@ -156,7 +172,7 @@ def _profile_json(conn, user):
         "cvs": [_cv_json(c) for c in cvs], "max_cvs": config.MAX_CVS,
         "max_mb": config.MAX_CV_MB,
         "profile": candidate.public(profile), "stats": stats,
-        "about": row["about"], "goals": row["goals"],
+        "about": row["about"],
         "analysis": {
             "status": status, "error": row["analysis_error"],
             "result": row["analysis"], "at": row["analysis_at"],
@@ -167,6 +183,44 @@ def _profile_json(conn, user):
         "empty": not text,
         "busy": any(c["status"] in ("pending", "working") for c in cvs) or
         status in ("pending", "working"),
+    }
+
+
+MATCH_STATUSES = ("new", "interested", "applied", "rejected")
+MATCH_FIELDS = ("offer_id", "portal", "url", "title", "company", "cities",
+                "mode", "salary_min", "salary_max", "currency", "contracts",
+                "level", "skills", "nice", "posted", "first_seen",
+                "last_seen", "prescore", "status", "wanted", "score",
+                "review", "review_error", "reviewed_at", "created_at")
+
+
+def _offers_json(conn, user):
+    profile, row, _ = db.built_profile(conn, user["id"])
+    skills = matching.skill_names(profile, row["wishes"])
+    matches = []
+    for m in db.user_matches(conn, user["id"]):
+        item = {k: m.get(k) for k in MATCH_FIELDS}
+        item["wanted"] = bool(m["wanted"])
+        item["model"] = (m["model"] or {}).get("model")
+        item["have"] = [s for s in m["skills"]
+                        if candidate.normalize(s) in skills]
+        matches.append(item)
+    midnight = offers._midnight()
+    paths = (row["analysis"] or {}).get("career_paths") or []
+    return {
+        "wishes": row["wishes"], "goals": row["goals"],
+        "choices": matching.schema(),
+        "terms": matching.terms(row["wishes"], row["analysis"]),
+        "suggestions": [{"title": p["title"], "fit": p["fit"],
+                         "roles": p["roles"], "keywords": p["keywords"]}
+                        for p in paths],
+        "status": offers.status(user["id"]),
+        "offers_at": row["offers_at"], "wanted": bool(row["offers_wanted"]),
+        "interval": config.OFFERS_INTERVAL,
+        "daily": {"limit": db.daily_reviews(conn, user["id"]),
+                  "used": db.reviews_since(conn, user["id"], midnight)},
+        "fresh": time.time() - 2 * 86400,
+        "matches": matches,
     }
 
 
@@ -262,6 +316,8 @@ class Handler(SimpleHTTPRequestHandler):
             return {"models": llm.catalogue() or []}
         if path == "/api/profile" or path.startswith("/api/profile/"):
             return self._profile(conn, user, method, path[13:])
+        if path == "/api/offers" or path.startswith("/api/offers/"):
+            return self._offers(conn, user, method, path[12:])
         if method == "POST" and path == "/api/cvs":
             return self._upload(conn, user)
         m = re.fullmatch(r"/api/cvs/(\d+)/([a-z]+)", path)
@@ -306,6 +362,16 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 db.set_models(conn, user["id"], *_clean_models(body))
             return _settings_json(conn, user)
+        if action == "reviews":
+            try:
+                daily = int(body.get("daily"))
+            except (TypeError, ValueError):
+                daily = -1
+            if not 0 <= daily <= config.OFFERS_MAX_REVIEWS:
+                raise db.Error("Liczba ocen dziennie: od 0 do %d."
+                               % config.OFFERS_MAX_REVIEWS)
+            db.set_daily_reviews(conn, user["id"], daily)
+            return _settings_json(conn, user)
         if action == "use":
             for which in ("paid", "free"):
                 if "use_" + which in body:
@@ -326,12 +392,11 @@ class Handler(SimpleHTTPRequestHandler):
             raise HttpError(405, "Niedozwolona metoda.")
         body = self._body()
         if action == "about":
-            db.save_about(conn, user["id"], body.get("about"),
-                          body.get("goals"))
+            db.save_about(conn, user["id"], body.get("about"))
             return _profile_json(conn, user)
         if action == "analysis":
             profile, row, _ = db.built_profile(conn, user["id"])
-            if not candidate.text(profile, row["about"], row["goals"]):
+            if not db.profile_text(profile, row):
                 raise db.Error("Profil jest pusty: wgraj CV albo uzupełnij "
                                "go ręcznie.")
             if not db.account(conn, user["id"])["key"]:
@@ -373,6 +438,41 @@ class Handler(SimpleHTTPRequestHandler):
             raise db.Error("Wypełnij pole „%s”." % e)
         db.save_overrides(conn, user["id"], overrides)
         return _profile_json(conn, user)
+
+    # --- offers ---------------------------------------------------------
+
+    def _offers(self, conn, user, method, action):
+        if method == "GET" and not action:
+            return _offers_json(conn, user)
+        if method != "POST":
+            raise HttpError(405, "Niedozwolona metoda.")
+        body = self._body()
+        if action == "wishes":
+            db.save_wishes(conn, user["id"], matching.clean(body.get("wishes")),
+                           body.get("goals"))
+            offers.wake()
+            return _offers_json(conn, user)
+        if action == "search":
+            db.want_offers(conn, user["id"])
+            offers.wake()
+            return _offers_json(conn, user)
+        m = re.fullmatch(r"(\d+)/(status|review)", action)
+        if not m or not db.get_match(conn, user["id"], int(m.group(1))):
+            raise HttpError(404, "Nie ma takiej oferty.")
+        offer_id = int(m.group(1))
+        if m.group(2) == "status":
+            if body.get("status") not in MATCH_STATUSES:
+                raise HttpError(400, "Nieprawidłowy stan.")
+            db.set_match_status(conn, user["id"], offer_id, body["status"])
+        else:
+            account = db.account(conn, user["id"])
+            if not account["key"]:
+                raise db.Error(worker.NO_KEY)
+            if not (account["use_paid"] or account["use_free"]):
+                raise db.Error(worker.NO_MODELS)
+            db.want_review(conn, user["id"], offer_id)
+            offers.wake()
+        return _offers_json(conn, user)
 
     # --- CVs ------------------------------------------------------------
 

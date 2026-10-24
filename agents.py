@@ -1,6 +1,8 @@
 """What the models do, and only that: read_cv() turns the text of one CV
 into a structured extraction (candidate.py merges those and does the
-rest), analyze() describes a candidate from their whole profile.
+rest), analyze() describes a candidate from their whole profile,
+review_offer() rates a job offer for a candidate (matching.py chooses
+which).
 
 Both ask for a JSON answer (llm.ask_json) and check it before it's kept.
 Prompts are in Polish: so is what the models write.
@@ -12,6 +14,7 @@ import logging
 import candidate
 import documents
 import llm
+import matching
 
 log = logging.getLogger("agents")
 
@@ -185,3 +188,87 @@ def analyze(profile_text, stats, account):
     analysis, _, model = llm.ask_json(messages, "analyze", _validate_analysis,
                                       account)
     return analysis, model
+
+
+REVIEW = """Jesteś doświadczonym rekruterem i doradcą kariery. Oceniasz, jak \
+dobrze oferta pracy pasuje do kandydata: do jego doświadczenia i umiejętności \
+oraz do tego, czego szuka. Bądź rzetelny i konkretny, odwołuj się do faktów \
+z profilu i z oferty; nie zawyżaj ocen.
+
+Odpowiedz wyłącznie obiektem JSON, w tej kolejności pól:
+{"summary": "1–2 zdania: czym jest ta praca i jak ma się do kandydata", \
+"pros": ["co pasuje"], "cons": ["czego brakuje albo co nie pasuje do \
+oczekiwań"], "score": 0–100}
+
+Zalet i wad podaj po 2–4, każdą krótko (do jednego zdania), najważniejsze \
+najpierw. Nie powtarzaj tego, co oczywiste z samej oferty.
+
+Skala: 85–100 świetne dopasowanie, kandydat spełnia prawie wszystkie wymagania \
+i oferta odpowiada temu, czego szuka; 65–84 dobre, z drobnymi brakami; 40–64 \
+częściowe, wyraźne braki albo rozjazd z oczekiwaniami; poniżej 40 słabe. \
+Poziom stanowiska (junior/senior) zestaw ze stażem kandydata.
+
+<kandydat>
+%s
+</kandydat>
+
+<czego_szuka>
+%s
+</czego_szuka>"""
+
+
+def _offer_text(offer, text):
+    names = {"remote": "zdalnie", "hybrid": "hybrydowo",
+             "office": "stacjonarnie"}
+    contracts = dict(matching.CONTRACTS)
+    levels = dict(matching.LEVELS)
+    lines = ["Stanowisko: %s" % offer["title"],
+             "Firma: %s" % offer["company"]]
+    if offer["cities"] or offer["mode"]:
+        lines.append("Miejsce: %s" % ", ".join(
+            filter(None, [", ".join(offer["cities"][:5]),
+                          names.get(offer["mode"], "")])))
+    if offer.get("salary_min"):
+        lines.append("Wynagrodzenie: %s–%s %s miesięcznie" % (
+            offer["salary_min"], offer["salary_max"], offer["currency"]))
+    if offer["contracts"]:
+        lines.append("Umowa: %s" % ", ".join(
+            contracts.get(c, c) for c in offer["contracts"]))
+    if offer["level"]:
+        lines.append("Poziom: %s" % levels.get(offer["level"],
+                                               offer["level"]))
+    if offer["skills"]:
+        lines.append("Wymagane umiejętności: %s" % ", ".join(offer["skills"]))
+    if offer["nice"]:
+        lines.append("Mile widziane: %s" % ", ".join(offer["nice"]))
+    if text:
+        lines += ["", text]
+    return "\n".join(lines)
+
+
+def _validate_review(answer):
+    try:
+        score = int(round(float(answer.get("score"))))
+    except (TypeError, ValueError):
+        raise ValueError("no score")
+    summary = candidate.clean_text(answer.get("summary"), 600)
+    if not summary:
+        raise ValueError("no summary")
+    return {"summary": summary, "score": max(0, min(100, score)),
+            "pros": candidate.clean_value("list", answer.get("pros"), 300)[:5],
+            "cons": candidate.clean_value("list", answer.get("cons"), 300)[:5]}
+
+
+def review_offer(profile_text, wishes_text, offer, text, account):
+    """(review: {summary, pros, cons, score}, who answered) of an offer
+    for a candidate. The candidate goes in the system prompt, the same
+    for all their offers (cached by models that cache)."""
+    messages = [
+        {"role": "system", "content": REVIEW % (
+            profile_text, wishes_text or "(nie napisał)")},
+        {"role": "user", "content": "<oferta>\n%s\n</oferta>"
+         % _offer_text(offer, text)},
+    ]
+    review, _, model = llm.ask_json(messages, "review offer",
+                                    _validate_review, account, think=False)
+    return review, model

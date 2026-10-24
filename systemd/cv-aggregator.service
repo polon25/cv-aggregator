@@ -1,7 +1,7 @@
 # The project directory and User below are filled in on install;
 # see README, "Running at boot".
 [Unit]
-Description=CV Aggregator - a candidate profile from all their CVs
+Description=CV Aggregator - job offers that fit a candidate
 After=network-online.target
 Wants=network-online.target
 

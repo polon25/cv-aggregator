@@ -73,6 +73,13 @@ h4 { font-size: .9rem; margin-bottom: .3rem; }
   border-radius: 7px; background: #0f766e; color: #fff; font-size: .8rem;
   font-weight: 700;
 }
+.nav { display: flex; gap: .25rem; margin-right: auto; margin-left: 1rem; }
+.nav a {
+  color: var(--bar-text); text-decoration: none; padding: .3rem .75rem; border-radius: 6px;
+  opacity: .8; font-weight: 500;
+}
+.nav a:hover { opacity: 1; background: rgba(255, 255, 255, .08); }
+.nav a.active { opacity: 1; background: rgba(255, 255, 255, .16); }
 .account { display: flex; align-items: center; gap: .75rem; font-size: .95rem; }
 .account button {
   background: transparent; color: var(--bar-text);
@@ -308,4 +315,61 @@ label.toggle input:disabled + span { opacity: .55; }
   .cv-buttons { width: 100%; justify-content: flex-start; }
   .details { grid-template-columns: 1fr; gap: 0; }
   .details dd { margin-bottom: .5rem; }
+}
+
+/* --- the offers (offers.js) --- */
+.search-state { margin: -.25rem 0 .25rem; }
+.wishes > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: .5rem; }
+.wishes > summary::-webkit-details-marker { display: none; }
+.wishes > summary::after { content: "▸"; color: var(--muted); transition: transform .15s; }
+.wishes[open] > summary::after { transform: rotate(90deg); }
+.wishes > summary h2 { margin: 0; }
+.wishes .two { gap: 0 1.5rem; }
+.suggestions { margin-top: .9rem; }
+.suggestions .tags { margin-top: .35rem; }
+.check-grid { display: flex; flex-wrap: wrap; gap: .2rem 1rem; }
+label.check { display: inline-flex; gap: .35rem; align-items: center; margin: 0; font-weight: 400; }
+label.check input { accent-color: var(--accent); }
+input[type=number] {
+  width: 100%; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}
+.reviews-row { display: grid; grid-template-columns: 1fr 6rem; gap: 0 1rem; align-items: center; margin-top: 1.2rem; }
+.reviews-row .option-hint { grid-column: 1; }
+.reviews-row input { grid-column: 2; grid-row: 1 / span 2; }
+.offer-tabs { flex-wrap: wrap; }
+.offer-tabs button { flex: none; }
+.offer-tabs .count { vertical-align: 1px; }
+.empty-list { padding: 1rem 0; }
+.offer-list { display: flex; flex-direction: column; gap: .9rem; }
+.offer.dim { opacity: .65; }
+.offer-top { display: flex; gap: 1rem; align-items: flex-start; }
+.offer-main { min-width: 0; flex: 1; }
+.offer-title { font-weight: 600; font-size: 1.08rem; color: inherit; overflow-wrap: anywhere; }
+.offer-title:hover { color: var(--accent); }
+.offer-company { margin: .1rem 0 .15rem; }
+.score {
+  flex: none; width: 3.2rem; height: 3.2rem; border-radius: 10px; display: grid; place-items: center;
+  font-weight: 700; font-size: 1.25rem; border: 1px solid var(--line); background: var(--bg); color: var(--muted);
+}
+.score.high { background: var(--good-soft); color: var(--good); border-color: transparent; }
+.score.mid { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.score.low { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.offer .tags { margin-top: .7rem; }
+.tag-chip.have { border-color: var(--good); color: var(--good); background: var(--good-soft); }
+.offer-summary { margin: .7rem 0 0; }
+.pros-cons { gap: .25rem 1.5rem; margin-top: .4rem; font-size: .9rem; }
+.pros-cons ul { margin: 0; padding-left: 1.2rem; list-style: none; }
+.pros-cons li { position: relative; margin-top: .25rem; }
+.pros-cons li::before { position: absolute; left: -1.1rem; font-weight: 700; }
+.pros li::before { content: "+"; color: var(--good); }
+.cons li::before { content: "−"; color: var(--bad); }
+.offer-actions { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .9rem; }
+.offer-actions .btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.offer-actions .btn.danger.on { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.offer-dates { margin-left: auto; }
+.warn-text { color: var(--warn); }
+@media (max-width: 700px) {
+  .nav { margin-left: .25rem; }
+  .account > span { display: none; }
+  .offer-dates { margin-left: 0; width: 100%; }
 }

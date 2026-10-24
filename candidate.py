@@ -423,7 +423,7 @@ def match(section, a, b):
     return s if s >= 0.8 else None
 
 
-def _stems(text):
+def stems(text):
     """The beginnings of a text's longer words: "systemu akwizycji" and
     "system akwizycja" have the same, whatever the inflection."""
     return {w[:5] for w in normalize(text).split() if len(w) >= 3}
@@ -434,7 +434,7 @@ def same_sentence(a, b):
     alike as names, or mostly the same words."""
     if _sim(a, b) >= 0.85:
         return True
-    stems_a, stems_b = _stems(a), _stems(b)
+    stems_a, stems_b = stems(a), stems(b)
     least = min(len(stems_a), len(stems_b))
     return least >= 3 and len(stems_a & stems_b) / least >= 0.6
 
