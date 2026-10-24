@@ -4,11 +4,13 @@ worked out by the program alone, before any model reads an offer:
     terms()     what to search the portals for: the user's keywords and
                 roles, or, while they've written none, what the analysis
                 suggested
-    rule_out()  why an offer is no good whatever a model would think of
+    reasons()   why an offer is no good whatever a model would think of
                 it: the wrong place (farther than the user's distance from
                 their cities), too little pay (or none given, if the
                 user wants it given), the wrong contract or level, a word
-                the user wants to avoid (None: it may do)
+                the user wants to avoid; rule_out() gives the first, and
+                exception() the one that may be overlooked for an
+                offer that looks exceptionally good
     prescore()  0..1, how promising an offer looks: its title against the
                 roles sought, its skills against the candidate's
 
@@ -39,6 +41,15 @@ RATES = {"PLN": 1, "EUR": 4.3, "USD": 4.0, "GBP": 5.0, "CHF": 4.5}
 # set their own; and the most they may.
 DISTANCE = 30
 MAX_DISTANCE = 300
+# An offer breaking one criterion that may be overlooked (its level,
+# contract, pay up to EXCEPTION_PAY below the least, or not saying what it
+# pays) is kept anyway, as an exception, when it scores at least this...
+EXCEPTION_PRESCORE = 0.7
+EXCEPTION_PAY = 0.2
+# ...shown once a model gave it at least this...
+EXCEPTION_SCORE = 75
+# ...and rated with at most this share of the day's number of ratings.
+EXCEPTION_SHARE = 0.2
 # Offers scoring less than this aren't kept for the user at all.
 MIN_PRESCORE = 0.15
 
@@ -47,7 +58,7 @@ def empty():
     return {"roles": [], "keywords": [], "cities": [], "avoid": [],
             "modes": [], "contracts": [], "levels": [], "portals": [],
             "salary_min": None, "no_salary": True,
-            "distance": DISTANCE}
+            "distance": DISTANCE, "exceptions": True}
 
 
 def clean(raw):
@@ -70,6 +81,7 @@ def clean(raw):
         wishes["salary_min"] = None
     # offers that don't say what they pay are shown unless turned off
     wishes["no_salary"] = raw.get("no_salary") is not False
+    wishes["exceptions"] = raw.get("exceptions") is not False
     try:
         distance = int(float(str(raw.get("distance")).replace(",", ".")))
         wishes["distance"] = max(0, min(MAX_DISTANCE, distance))
@@ -149,39 +161,66 @@ def _city(city):
     return CITY_NAMES.get(name, name)
 
 
-def rule_out(offer, wishes, near=None):
-    """Why the offer doesn't do (a short reason in Polish), or None.
-    `near`: whether any of the offer's places is near enough to the user's
-    cities (None: not known, the cities' names are compared)."""
+def reasons(offer, wishes, near=None):
+    """Why the offer doesn't do: [(a short reason in Polish, whether it
+    may be overlooked for an exceptionally good offer)], empty when it
+    does. `near`: whether any of the offer's places is near enough to the
+    user's cities (None: not known, the cities' names are compared).
+    Place, way of working and words to avoid are never overlooked; nor is
+    pay more than EXCEPTION_PAY below the user's least."""
+    found = []
     modes = wishes.get("modes") or []
     if modes and offer["mode"] and offer["mode"] not in modes:
-        return "tryb pracy"
+        found.append(("tryb pracy", False))
     cities = {_city(c) for c in wishes.get("cities") or []}
     remote_ok = offer["mode"] == "remote" and (not modes or "remote" in modes)
     if cities and offer["cities"] and not remote_ok:
         if near is None:
             near = any(_city(c) in cities for c in offer["cities"])
         if not near:
-            return "miejscowość"
+            found.append(("miejscowość", False))
     if wishes.get("no_salary") is False and not offer.get("salary_max"):
-        return "brak widełek"
+        found.append(("brak widełek", True))
     least = wishes.get("salary_min")
     if least and offer.get("salary_max") and \
-            offer.get("currency") in RATES and \
-            offer["salary_max"] * RATES[offer["currency"]] < least:
-        return "wynagrodzenie"
+            offer.get("currency") in RATES:
+        pay = offer["salary_max"] * RATES[offer["currency"]]
+        if pay < least:
+            found.append(("wynagrodzenie", pay >= least * (1 - EXCEPTION_PAY)))
     contracts = wishes.get("contracts") or []
     if contracts and offer["contracts"] and \
             not set(offer["contracts"]) & set(contracts):
-        return "umowa"
+        names = dict(CONTRACTS)
+        found.append(("umowa: " + ", ".join(
+            names.get(c, c) for c in offer["contracts"]), True))
     levels = wishes.get("levels") or []
     if levels and offer["level"] and offer["level"] not in levels:
-        return "poziom"
+        found.append(("poziom: " + dict(LEVELS).get(offer["level"],
+                                                     offer["level"]), True))
     seen = candidate.normalize(offer["title"] + " " + offer["company"])
     for word in wishes.get("avoid") or []:
         word = candidate.normalize(word)
         if word and re.search(r"\b%s\b" % re.escape(word), seen):
-            return "unikane słowo"
+            found.append(("unikane słowo", False))
+            break
+    return found
+
+
+def rule_out(offer, wishes, near=None):
+    """Why the offer doesn't do (the first reason), or None."""
+    found = reasons(offer, wishes, near)
+    return found[0][0] if found else None
+
+
+def exception(offer, wishes, near, score):
+    """The one criterion an offer breaks that may be overlooked, when the
+    user allows exceptions and it looks exceptionally good (`score`, its
+    prescore, at least EXCEPTION_PRESCORE); else None."""
+    if wishes.get("exceptions") is False or score < EXCEPTION_PRESCORE:
+        return None
+    found = reasons(offer, wishes, near)
+    if len(found) == 1 and found[0][1]:
+        return found[0][0]
     return None
 
 

@@ -5,9 +5,12 @@
 // few seconds. Uses the helpers of app.js (el, api, fill, show...).
 
 const OFFERS_POLL_MS = 4000;
+// Exceptions (offers breaking one criterion) are shown among the best only
+// if rated well, and fewer than the rest (see bestOffers); they don't wait
+// in "Do oceny".
 const TABS = [
   ["best", "Polecane", (m) => m.status === "new" && m.score !== null && !m.stale],
-  ["todo", "Do oceny", (m) => m.status === "new" && (m.score === null || m.stale)],
+  ["todo", "Do oceny", (m) => m.status === "new" && (m.score === null || m.stale) && !m.outside],
   ["interested", "Interesujące", (m) => m.status === "interested"],
   ["applied", "Aplikowane", (m) => m.status === "applied"],
   ["rejected", "Odrzucone", (m) => m.status === "rejected"],
@@ -148,6 +151,7 @@ class OffersView {
     const salary = el("input", { type: "number", id: "w-salary", min: 0, step: 500, placeholder: "np. 12000",
                                  value: w.salary_min || "" });
     const noSalary = el("input", { type: "checkbox", checked: w.no_salary !== false });
+    const exceptions = el("input", { type: "checkbox", checked: w.exceptions !== false });
     const goals = el("textarea", { id: "w-goals", rows: 4, maxlength: 6000,
       placeholder: "Twoimi słowami: czym chcesz się zajmować, co jest dla ciebie ważne, czego chcesz uniknąć…" });
     goals.value = d.goals || "";
@@ -190,7 +194,7 @@ class OffersView {
               cities: split(cities.value, ","), avoid: split(avoid.value, ","),
               modes: modes.get(), contracts: contracts.get(), levels: levels.get(),
               portals: chosen.length === c.portals.length ? [] : chosen, salary_min: salary.value,
-              no_salary: noSalary.checked, distance: distance.value,
+              no_salary: noSalary.checked, distance: distance.value, exceptions: exceptions.checked,
             },
           });
           this.editing = false;
@@ -227,6 +231,11 @@ class OffersView {
         el("div", {}, el("label", {}, "Tryb pracy"), modes.node, el("label", {}, "Umowa"), contracts.node),
         el("div", {}, el("label", {}, "Poziom stanowiska"), levels.node)),
       el("label", { for: "w-avoid" }, "Unikaj ofert ze słowami (w tytule lub nazwie firmy)"), avoid,
+      el("label", { class: "check exceptions" }, exceptions,
+        el("span", {}, "Pokazuj też wyjątkowo dobrze dopasowane oferty, które nie spełniają jednego kryterium",
+          el("span", { class: "option-hint" }, "Poziomu, umowy, widełek albo wynagrodzenia (do 20% poniżej " +
+            "minimum); miejsce i unikane słowa obowiązują zawsze. Takich ofert jest wśród polecanych mniej niż " +
+            "pozostałych i są oznaczone."))),
       el("label", {}, "Portale"), portals.node,
       el("label", { for: "w-goals" }, "Czym chcesz się zajmować – twoimi słowami"), goals,
       el("div", { class: "row end" }, el("span", { class: "muted small saved-note" }), note, save),
@@ -239,9 +248,21 @@ class OffersView {
 
   // --- the offers
 
+  // The best offers: rated ones fitting every criterion, and exceptions
+  // rated at least exception_score, at most half as many (two at least).
+  bestOffers(items) {
+    const plain = items.filter((m) => !m.outside);
+    const odd = items.filter((m) => m.outside && m.score >= this.data.exception_score)
+      .sort((a, b) => b.score - a.score).slice(0, Math.max(2, Math.floor(plain.length / 2)));
+    return plain.concat(odd);
+  }
+
   renderList() {
     const all = this.data.matches;
-    const tabs = TABS.map(([key, label, test]) => [key, label, all.filter(test)]);
+    const tabs = TABS.map(([key, label, test]) => {
+      const items = all.filter(test);
+      return [key, label, key === "best" ? this.bestOffers(items) : items];
+    });
     const [, , shown] = tabs.find(([key]) => key === this.tab);
     if (this.tab === "todo") shown.sort((a, b) => (b.wanted - a.wanted) || (b.prescore - a.prescore));
     if (this.tab === "best") shown.sort((a, b) => b.score - a.score);
@@ -297,6 +318,8 @@ class OffersView {
             m.last_seen < this.data.fresh && el("span", { class: "warn-text" }, " · może być już nieaktualna")))),
       m.skills.length > 0 && el("div", { class: "tags small" }, m.skills.map((s) =>
         el("span", { class: "tag-chip" + (have.has(s) ? " have" : ""), title: have.has(s) ? "Masz tę umiejętność" : null }, s))),
+      m.outside && el("p", { class: "outside", title: "Nie spełnia tego kryterium, ale wygląda na wyjątkowo dobrze dopasowaną" },
+        "Poza kryterium – " + m.outside),
       m.stale && el("p", { class: "hint warn" }, "Ocena sprzed zmiany preferencji – zostanie powtórzona."),
       r && el("p", { class: "offer-summary" + (m.stale ? " muted" : "") }, r.summary),
       r && (r.pros.length > 0 || r.cons.length > 0) && el("div", { class: "two pros-cons" },

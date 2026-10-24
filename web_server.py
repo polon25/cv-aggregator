@@ -194,7 +194,8 @@ MORE_REVIEWS = 10
 MATCH_FIELDS = ("offer_id", "portal", "url", "title", "company", "cities",
                 "mode", "salary_min", "salary_max", "currency", "contracts",
                 "level", "skills", "nice", "posted", "first_seen",
-                "last_seen", "prescore", "status", "wanted", "score",
+                "last_seen", "prescore", "status", "wanted", "outside",
+                "score",
                 "review", "review_error", "reviewed_at", "created_at")
 
 
@@ -229,6 +230,7 @@ def _offers_json(conn, user):
                   "renewed": bool(row["wishes_at"]) and
                   offers.day_start(row) == row["wishes_at"]},
         "more": MORE_REVIEWS,
+        "exception_score": matching.EXCEPTION_SCORE,
         "fresh": time.time() - 2 * 86400,
         "matches": matches,
     }

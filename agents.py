@@ -217,6 +217,11 @@ Poziom stanowiska (junior/senior) zestaw ze stażem kandydata.
 </czego_szuka>"""
 
 
+OUTSIDE = """Uwaga: ta oferta nie spełnia jednego z kryteriów kandydata \
+(%s), ale poza tym wygląda na wyjątkowo dobrze dopasowaną. Oceń, czy mimo \
+to warto mu ją pokazać, i wspomnij o tym w wadach."""
+
+
 def _offer_text(offer, text):
     names = {"remote": "zdalnie", "hybrid": "hybrydowo",
              "office": "stacjonarnie"}
@@ -259,10 +264,15 @@ def _validate_review(answer):
             "cons": candidate.clean_value("list", answer.get("cons"), 300)[:5]}
 
 
-def review_offer(profile_text, wishes_text, offer, text, account):
+def review_offer(profile_text, wishes_text, offer, text, account,
+                 outside=None):
     """(review: {summary, pros, cons, score}, who answered) of an offer
     for a candidate. The candidate goes in the system prompt, the same
-    for all their offers (cached by models that cache)."""
+    for all their offers (cached by models that cache). `outside`: the
+    one criterion of the candidate's the offer breaks, kept anyway as it
+    looked exceptionally good (matching.exception)."""
+    if outside:
+        text = (OUTSIDE % outside) + "\n\n" + (text or "")
     messages = [
         {"role": "system", "content": REVIEW % (
             profile_text, wishes_text or "(nie napisał)")},

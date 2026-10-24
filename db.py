@@ -30,6 +30,8 @@
                 program (`prescore`), what a model made of it (`review`,
                 with `score` 0..100; `wanted`: the user asked for it,
                 `extra`: it was, so it doesn't count in the day's number),
+                the criterion it breaks if it's kept as an exception
+                (`outside`, see matching.exception),
                 and the user's mark: new, interested, applied or rejected
 """
 
@@ -136,6 +138,7 @@ CREATE TABLE IF NOT EXISTS matches (
     status TEXT NOT NULL DEFAULT 'new',  -- new, interested, applied, rejected
     wanted INTEGER NOT NULL DEFAULT 0,   -- the user asked for a review
     extra INTEGER NOT NULL DEFAULT 0,    -- reviewed as asked: not counted
+    outside TEXT,                        -- the criterion an exception breaks
     score INTEGER,                       -- 0..100 by the model
     review TEXT,                         -- JSON, see agents.review_offer
     review_error TEXT,
@@ -152,6 +155,7 @@ ADDED_COLUMNS = (
     ("profiles", "offers_wanted", "INTEGER NOT NULL DEFAULT 0"),
     ("profiles", "wishes_at", "REAL"),
     ("matches", "extra", "INTEGER NOT NULL DEFAULT 0"),
+    ("matches", "outside", "TEXT"),
 )
 
 USERNAME_RE = re.compile(r"[\w.\-]{3,32}")
@@ -719,13 +723,15 @@ def matched_ids(conn, user_id):
 
 
 def add_matches(conn, user_id, scored):
-    """[(offer id, prescore)] kept for the user."""
+    """[(offer id, prescore, the criterion it breaks or None)] kept for
+    the user."""
     now = time.time()
     with conn:
         conn.executemany(
             "INSERT OR IGNORE INTO matches (user_id, offer_id, created_at, "
-            "prescore) VALUES (?, ?, ?, ?)",
-            [(user_id, offer_id, now, score) for offer_id, score in scored])
+            "prescore, outside) VALUES (?, ?, ?, ?, ?)",
+            [(user_id, offer_id, now, score, outside)
+             for offer_id, score, outside in scored])
 
 
 def _match_row(row):
@@ -737,7 +743,7 @@ def _match_row(row):
 
 MATCH_COLUMNS = (
     "m.offer_id, m.created_at, m.prescore, m.status, m.wanted, m.extra, "
-    "m.score, "
+    "m.outside, m.score, "
     "m.review, m.review_error, m.model, m.reviewed_at, o.portal, o.url, "
     "o.data, o.first_seen, o.last_seen")
 
@@ -757,12 +763,15 @@ def get_match(conn, user_id, offer_id):
     return _match_row(row) if row else None
 
 
-def reviews_since(conn, user_id, since):
+def reviews_since(conn, user_id, since, exceptions=False):
     """How many offers a model rated for the user since `since` (the
-    ones the user asked for aside)."""
+    ones the user asked for aside); with `exceptions`, only the offers
+    kept as exceptions."""
     return conn.execute(
         "SELECT COUNT(*) AS n FROM matches WHERE user_id = ? AND "
-        "reviewed_at >= ? AND extra = 0", (user_id, since)).fetchone()["n"]
+        "reviewed_at >= ? AND extra = 0" +
+        (" AND outside IS NOT NULL" if exceptions else ""),
+        (user_id, since)).fetchone()["n"]
 
 
 TO_RATE = ("m.wanted = 0 AND (m.reviewed_at IS NULL OR m.reviewed_at < ?) "
@@ -770,20 +779,24 @@ TO_RATE = ("m.wanted = 0 AND (m.reviewed_at IS NULL OR m.reviewed_at < ?) "
            "o.last_seen >= ?")
 
 
-def to_review(conn, user_id, since, limit, wishes_at):
-    """The user's offers to be rated next: the ones they asked for, then
-    the most promising not rated since the wishes last changed
-    (`wishes_at`), seen on their portal since `since`, at most `limit` of
-    the latter."""
-    wanted = [_match_row(r) for r in conn.execute(
+def wanted_reviews(conn, user_id):
+    """The user's offers they asked to have rated."""
+    return [_match_row(r) for r in conn.execute(
         "SELECT %s FROM matches m JOIN offers o ON o.id = m.offer_id WHERE "
         "m.user_id = ? AND m.wanted = 1" % MATCH_COLUMNS, (user_id,))]
-    best = [_match_row(r) for r in conn.execute(
+
+
+def to_review(conn, user_id, since, limit, wishes_at, exceptions=False):
+    """The most promising of the user's offers not rated since the wishes
+    last changed (`wishes_at`), seen on their portal since `since`, at
+    most `limit`: the ones fitting every criterion, or, with
+    `exceptions`, the ones kept as exceptions."""
+    return [_match_row(r) for r in conn.execute(
         "SELECT %s FROM matches m JOIN offers o ON o.id = m.offer_id WHERE "
-        "m.user_id = ? AND %s ORDER BY m.prescore DESC LIMIT ?"
-        % (MATCH_COLUMNS, TO_RATE),
+        "m.user_id = ? AND %s AND m.outside IS %s NULL ORDER BY m.prescore "
+        "DESC LIMIT ?" % (MATCH_COLUMNS, TO_RATE,
+                          "NOT" if exceptions else ""),
         (user_id, wishes_at or 0, since, max(0, limit)))]
-    return wanted + best
 
 
 def want_more(conn, user_id, count, since, wishes_at):
@@ -791,8 +804,9 @@ def want_more(conn, user_id, count, since, wishes_at):
     take them); returns how many."""
     ids = [r["offer_id"] for r in conn.execute(
         "SELECT m.offer_id FROM matches m JOIN offers o ON o.id = m.offer_id "
-        "WHERE m.user_id = ? AND %s ORDER BY m.prescore DESC LIMIT ?"
-        % TO_RATE, (user_id, wishes_at or 0, since, count))]
+        "WHERE m.user_id = ? AND %s AND m.outside IS NULL ORDER BY "
+        "m.prescore DESC LIMIT ?" % TO_RATE,
+        (user_id, wishes_at or 0, since, count))]
     with conn:
         conn.executemany("UPDATE matches SET wanted = 1 WHERE user_id = ? "
                          "AND offer_id = ?", [(user_id, i) for i in ids])
@@ -848,10 +862,12 @@ def drop_matches(conn, user_id, offer_ids):
 
 
 def rescore_matches(conn, user_id, scored):
+    """[(offer id, prescore, the criterion it breaks or None)]."""
     with conn:
-        conn.executemany("UPDATE matches SET prescore = ? WHERE user_id = ? "
-                         "AND offer_id = ?",
-                         [(score, user_id, i) for i, score in scored])
+        conn.executemany("UPDATE matches SET prescore = ?, outside = ? WHERE "
+                         "user_id = ? AND offer_id = ?",
+                         [(score, outside, user_id, i)
+                          for i, score, outside in scored])
 
 
 def users_wanting_reviews(conn):

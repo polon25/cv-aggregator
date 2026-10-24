@@ -174,13 +174,19 @@ teraz", or saving "Czego szukam"):
    candidate has, keywords in the title. Promising ones are kept for the
    user, once even when two portals list the same job; ones kept earlier
    and not marked are judged again by the wishes as they are, rated ones
-   too.
+   too. Unless the user turns it off, an offer breaking just one criterion
+   that may be overlooked – its level, contract, pay up to 20% below the
+   least, or not saying what it pays – is kept as an exception when it
+   scores 0.7 at least.
 3. **Rating** ([agents.py](agents.py), a model): the most promising not
    rated since the user last changed what they look for, with their full
    text from the portal, get a score 0–100, a summary, what fits and what
    doesn't – up to the user's number a day (counted anew when they change
    what they look for), plus any they asked for ("Oceń", "Oceń 10
-   kolejnych"). The candidate's profile is the system prompt, the
+   kolejnych"). Exceptions get a fifth of the day's number at most, and
+   the model is told which criterion they break; only the ones it rates
+   75 at least are shown among the best, marked, and at most half as many
+   as the rest. The candidate's profile is the system prompt, the
    same for all their offers, so models that cache read it for a tenth.
 
 ## Portals
