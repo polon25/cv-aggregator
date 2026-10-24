@@ -78,7 +78,7 @@ def clean(raw):
     for key, options in CHOICES.items():
         allowed = [k for k, _ in options]
         wishes[key] = [k for k in allowed if k in (raw.get(key) or [])]
-    wishes["portals"] = [p for p in config.PORTALS
+    wishes["portals"] = [p for p in portals.PORTALS
                          if p in (raw.get("portals") or [])]
     try:
         salary = int(float(str(raw.get("salary_min") or "").replace(
@@ -100,7 +100,11 @@ def clean(raw):
 def schema():
     """The choices for the page's form."""
     return {"modes": MODES, "contracts": CONTRACTS, "levels": LEVELS,
-            "portals": [(p, portals.NAMES.get(p, p)) for p in config.PORTALS],
+            "portals": [{"id": k, "name": v.get("name") or k,
+                         "country": v.get("country") or "",
+                         "site": v.get("site") or "",
+                         "default": v.get("default", True)}
+                        for k, v in portals.PORTALS.items()],
             "max": MAX_ENTRIES}
 
 

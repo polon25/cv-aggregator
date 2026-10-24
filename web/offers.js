@@ -17,8 +17,6 @@ const TABS = [
 const MODE_NAMES = { remote: "zdalnie", hybrid: "hybrydowo", office: "stacjonarnie" };
 const LEVEL_NAMES = { intern: "staż", junior: "junior", mid: "mid", senior: "senior", lead: "lead" };
 const CONTRACT_NAMES = { uop: "UoP", b2b: "B2B", other: "inna" };
-const PORTAL_NAMES = { justjoin: "JustJoin.it", rocketjobs: "RocketJobs", nofluffjobs: "No Fluff Jobs",
-                       bulldogjob: "Bulldogjob" };
 
 const money = (n) => Math.round(n).toLocaleString("pl-PL");
 
@@ -167,8 +165,10 @@ class OffersView {
     const modes = checks("modes", c.modes, w.modes);
     const contracts = checks("contracts", c.contracts, w.contracts);
     const levels = checks("levels", c.levels, w.levels);
-    // no portal chosen means all of them
-    const portals = checks("portals", c.portals, w.portals.length ? w.portals : c.portals.map((p) => p[0]));
+    // no portal chosen means the default ones
+    const defaults = c.portals.filter((p) => p.default).map((p) => p.id);
+    const portals = checks("portals", c.portals.map((p) => [p.id, p.name + (p.country ? " (" + p.country + ")" : "")]),
+                           w.portals.length ? w.portals : defaults);
     const error = el("p", { class: "error", role: "alert" });
     const note = el("span", { class: "muted small" });
     const save = el("button", { class: "btn primary", type: "submit" }, "Zapisz i szukaj");
@@ -194,7 +194,8 @@ class OffersView {
               roles: split(roles.value, "\n"), keywords: split(keywords.value, "\n"),
               cities: split(cities.value, ","), avoid: split(avoid.value, ","),
               modes: modes.get(), contracts: contracts.get(), levels: levels.get(),
-              portals: chosen.length === c.portals.length ? [] : chosen, salary_min: salary.value,
+              portals: chosen.slice().sort().join() === defaults.slice().sort().join() ? [] : chosen,
+              salary_min: salary.value,
               no_salary: noSalary.checked, distance: distance.value, flexible: flexible.checked,
             },
           });
@@ -303,6 +304,11 @@ class OffersView {
       weak);
   }
 
+  portalName(id) {
+    const portal = this.data.choices.portals.find((p) => p.id === id);
+    return portal ? portal.name : id;
+  }
+
   card(m) {
     const r = m.review;
     const salary = m.salary_min ? money(m.salary_min) + (m.salary_max && m.salary_max !== m.salary_min
@@ -310,7 +316,7 @@ class OffersView {
     const place = [m.cities.slice(0, 3).join(", ") + (m.cities.length > 3 ? " +" + (m.cities.length - 3) : ""),
                    MODE_NAMES[m.mode]].filter(Boolean).join(" · ");
     const meta = [place, salary, m.contracts.map((c) => CONTRACT_NAMES[c] || c).join("/"), LEVEL_NAMES[m.level],
-                  PORTAL_NAMES[m.portal] || m.portal].filter(Boolean);
+                  this.portalName(m.portal)].filter(Boolean);
     const have = new Set(m.have);
     const mark = (status, label, cls, title) => el("button", {
       class: "btn small " + (cls || "") + (m.status === status ? " on" : ""), type: "button", title,

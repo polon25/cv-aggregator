@@ -1,35 +1,61 @@
 """Job portals: search(portal, term) reads one portal's list of offers for a
 search term, details(offer) the full text of one offer. Standard library
-only; pages are read the way a browser gets them, with no private API:
+only.
 
-    justjoin     justjoin.it, IT jobs: a list page carries its 50 offers'
-                 data (Next.js' flight data), an offer's page its text
-                 (JSON-LD JobPosting)
-    rocketjobs   rocketjobs.pl, the same platform for jobs outside IT
-    nofluffjobs  nofluffjobs.com: a list page's state holds 20 offers a
-                 page, an offer's page the offer
-    bulldogjob   bulldogjob.pl: a list page's __NEXT_DATA__ holds 50
-                 offers; searched by skill (it has no text search for
-                 pages), an offer's page has JSON-LD JobPosting
+Every portal is a JSON file in portals/ (and in config.PORTALS_DIR, which
+may add portals or replace shipped ones by their id):
 
-Requests say who they are (USER_AGENT), keep to what the portals'
-robots.txt allows (no /api/ paths) and are spaced out: at least
-config.PORTAL_DELAY seconds between two to the same host.
+    {"id", "name", "country", "site" (its address, for the page),
+     "default": whether users who chose no portals get it,
+     "delay": seconds at least between two requests to it,
+     and either "parser": one of the parsers in sites.py, for portals that
+     need code, with what it takes (e.g. its addresses), or "search" and
+     "fields" (and "details"): the portal described, for portals whose
+     lists come as JSON (an API, or JSON in the page)}
 
-An offer, as every portal's is made to look:
+A described portal:
+
+    "search": {"url", "params" (templates; {term} is the search term),
+               "headers", "format": json, next_data, json_ld or
+               script:<id> (where the JSON is), "items": the path to the
+               list of offers, "filter": true when the portal can't be
+               searched (its offers are kept if they have every word of
+               the term)}
+    "fields": {offer field: a path in an item ("a.b", "a[].b" for each
+               of a list), or {"path"/"template"/"value"/"pairs", and
+               "split": a separator, "map": {value: ours} (values not in
+               it are dropped)}}; offer fields as below, plus "period"
+               (salary per hour, day, month or year) and "text" (the
+               offer's full text, when the list has it)
+    "details": {"url" (a template), "headers", "format", "text": [paths]};
+               without it, an offer's page is read for JSON-LD JobPosting
+
+Templates take {path} of the item (or {term}), and |base64 or |url after
+the path encodes it.
+
+Requests say who they are (USER_AGENT), keep to what the portals allow
+(robots.txt, their terms) and are spaced out per host. A list fetched for
+one term serves the others for a few minutes (portals that can't be
+searched give the same list for every term).
+
+An offer, as every portal's is made to look (tidy()):
 
     {portal, key (the portal's id), url, title, company, cities, mode
     (remote, hybrid, office or ""), salary_min, salary_max, currency (a
     month's pay; None when not given), contracts (uop, b2b, other), level
     (intern, junior, mid, senior, lead or ""), skills, nice (skills nice
     to have), posted (epoch seconds or None), points (the [lat, lon] of
-    its places, when the portal gives them)}
+    its places, when the portal gives them), text (its full text, when
+    the list gives it)}
 """
 
+import base64
 import datetime
+import glob
 import html
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -45,30 +71,94 @@ log = logging.getLogger("portals")
 USER_AGENT = ("CVAggregator/0.1 (private job search; "
               "+https://github.com/polon25/cv-aggregator)")
 TIMEOUT = 30
-MAX_PAGE = 4 * 1024 * 1024
-NAMES = {"justjoin": "JustJoin.it", "rocketjobs": "RocketJobs",
-         "nofluffjobs": "No Fluff Jobs", "bulldogjob": "Bulldogjob"}
+MAX_PAGE = 8 * 1024 * 1024
 # Work days and hours in a month, for pay given by the day or hour.
 DAYS, HOURS = 21, 168
+# Seconds a fetched list is kept for other terms.
+CACHE_SECONDS = 600
+MODES = ("remote", "hybrid", "office")
+LEVEL_NAMES = ("intern", "junior", "mid", "senior", "lead")
+CONTRACT_NAMES = ("uop", "b2b", "other")
 
 _last = {}  # host -> time.monotonic() of the last request
 _host_lock = threading.Lock()
+_cache = {}  # (url, headers) -> (time.monotonic(), page)
+_cache_lock = threading.Lock()
 
 
 class PortalError(Exception):
     """A page that couldn't be had or read."""
 
 
-def _get(url):
-    """The page at url, as text, after waiting for the host's turn."""
+# --- the portals there are -------------------------------------------------
+
+PORTALS = {}  # id -> its description, in order
+
+
+def load():
+    """Reads the portals' files: portals/ beside the app, then
+    config.PORTALS_DIR (whose files replace those of the same id);
+    config.PORTALS, if set, keeps only the ones it names."""
+    found = {}
+    for directory in (os.path.join(config.BASE_DIR, "portals"),
+                      config.PORTALS_DIR):
+        if not directory:
+            continue
+        for path in sorted(glob.glob(os.path.join(directory, "*.json"))):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    portal = json.load(f)
+                if not re.fullmatch(r"[a-z0-9_]+", portal.get("id", "")) or \
+                        not (portal.get("parser") or portal.get("search")):
+                    raise ValueError("no id, or neither parser nor search")
+            except (OSError, ValueError) as e:
+                log.error("Portal %s left out: %s", path, e)
+                continue
+            found[portal["id"]] = portal
+    if config.PORTALS:
+        found = {k: v for k, v in found.items() if k in config.PORTALS}
+    PORTALS.clear()
+    # the default ones first, then by country and name
+    PORTALS.update(sorted(found.items(), key=lambda kv: (
+        not kv[1].get("default", True), kv[1].get("country") or "",
+        (kv[1].get("name") or kv[0]).casefold())))
+    log.info("Portals: %s", ", ".join(
+        "%s%s" % (k, "" if v.get("default", True) else " (if chosen)")
+        for k, v in PORTALS.items()))
+
+
+def defaults():
+    """The portals searched for users who chose none."""
+    return [k for k, v in PORTALS.items() if v.get("default", True)]
+
+
+def name(portal_id):
+    return (PORTALS.get(portal_id) or {}).get("name") or portal_id
+
+
+# --- fetching ----------------------------------------------------------------
+
+def get(url, headers=None, delay=None, cache=False):
+    """The page at url, as text, after waiting for the host's turn (`delay`
+    seconds after the last request; config.PORTAL_DELAY by default).
+    With `cache`, a page fetched less than CACHE_SECONDS ago is reused."""
+    headers = dict(headers or {})
+    key = (url, tuple(sorted(headers.items())))
+    if cache:
+        with _cache_lock:
+            kept = _cache.get(key)
+        if kept and time.monotonic() - kept[0] < CACHE_SECONDS:
+            return kept[1]
     host = urllib.parse.urlsplit(url).netloc
     with _host_lock:
-        wait = _last.get(host, 0) + config.PORTAL_DELAY - time.monotonic()
+        pause = config.PORTAL_DELAY if delay is None else delay
+        wait = _last.get(host, 0) + pause - time.monotonic()
         if wait > 0:
             time.sleep(wait)
         _last[host] = time.monotonic()
-    request = urllib.request.Request(url, headers={
-        "User-Agent": USER_AGENT, "Accept-Language": "pl,en;q=0.8"})
+    headers.setdefault("User-Agent", USER_AGENT)
+    headers.setdefault("Accept-Language", "pl,en;q=0.8")
+    request = urllib.request.Request(url, headers=headers)
     started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
@@ -79,63 +169,58 @@ def _get(url):
         raise PortalError("%s: %s" % (url, e))
     log.debug("GET %s: %d bytes in %.1fs", url, len(body),
               time.monotonic() - started)
-    return body.decode("utf-8", "replace")
+    page = body.decode("utf-8", "replace")
+    if cache:
+        with _cache_lock:
+            _cache[key] = (time.monotonic(), page)
+            for old in [k for k, (at, _) in _cache.items()
+                        if time.monotonic() - at > CACHE_SECONDS]:
+                del _cache[old]
+    return page
 
 
 # --- reading what pages carry -------------------------------------------
 
-def _flight_offers(page):
-    """The offers of a justjoin/rocketjobs list page: an "offers" array in
-    Next.js' flight data (self.__next_f.push chunks)."""
-    for chunk in re.findall(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)', page,
-                            re.S):
-        try:
-            text = json.loads('"' + chunk + '"')
-        except ValueError:
-            continue
-        start = text.find('{"offers":[')
-        if start >= 0:
-            try:
-                return json.JSONDecoder().raw_decode(text, start)[0]["offers"]
-            except (ValueError, KeyError):
-                pass
-    return []
-
-
-def _nfj_state(page):
-    m = re.search(r'<script id="serverApp-state"[^>]*>(.*?)</script>', page,
-                  re.S)
-    if not m:
-        return {}
-    text = m.group(1)
-    for code, char in (("&q;", '"'), ("&s;", "'"), ("&l;", "<"),
-                       ("&g;", ">"), ("&a;", "&")):
-        text = text.replace(code, char)
+def script_json(page, script_id):
+    """The JSON in <script id="...">."""
+    m = re.search(r'<script id="%s"[^>]*>(.*?)</script>' % re.escape(
+        script_id), page, re.S)
     try:
-        return json.loads(text)
+        return json.loads(m.group(1)) if m else None
     except ValueError:
-        return {}
+        return None
 
 
-def _next_data(page):
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', page,
-                  re.S)
-    try:
-        return json.loads(m.group(1))["props"]["pageProps"] if m else {}
-    except (ValueError, KeyError):
-        return {}
-
-
-def _json_ld(page, kind):
+def json_ld(page, kind):
     for m in re.finditer(r'<script[^>]*type="application/ld\+json"[^>]*>'
                          r'(.*?)</script>', page, re.S):
         try:
             data = json.loads(m.group(1))
         except ValueError:
             continue
-        if isinstance(data, dict) and data.get("@type") == kind:
-            return data
+        for item in data if isinstance(data, list) else [data]:
+            if isinstance(item, dict) and item.get("@type") == kind:
+                return item
     return None
+
+
+def parse(page, kind):
+    """The JSON a page carries: kind json (the page is JSON), next_data
+    (Next.js' __NEXT_DATA__ page props), json_ld (a JobPosting) or
+    script:<id>."""
+    if kind == "json":
+        try:
+            return json.loads(page)
+        except ValueError:
+            return None
+    if kind == "next_data":
+        return ((script_json(page, "__NEXT_DATA__") or {}).get("props")
+                or {}).get("pageProps")
+    if kind == "json_ld":
+        return json_ld(page, "JobPosting")
+    if kind.startswith("script:"):
+        return script_json(page, kind[7:])
+    raise PortalError("no such format: %s" % kind)
 
 
 class _Text(HTMLParser):
@@ -162,220 +247,236 @@ class _Text(HTMLParser):
 
 
 def text_of(markup):
-    markup = markup or ""
+    markup = markup if isinstance(markup, str) else ""
     if "&lt;" in markup and "<" not in markup:  # HTML escaped once more
         markup = html.unescape(markup)
     parser = _Text()
     parser.feed(markup)
     text = "".join(parser.parts)
-    text = re.sub(r"[ \t ]+", " ", text)
+    text = re.sub(r"[ \t\u00a0]+", " ", text)
     return re.sub(r"\n\s*\n+", "\n", text).strip()
 
 
-def _epoch(value):
-    """Epoch seconds from milliseconds or an ISO time in UTC
-    ("2026-10-24T14:05:08.9675914Z"); None if it's neither."""
-    if isinstance(value, (int, float)):
+def epoch(value):
+    """Epoch seconds from milliseconds or seconds, or an ISO date or time
+    in UTC ("2026-10-24T14:05:08.9675914Z", "2026-10-24"); None if it's
+    none of these."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         return value / 1000 if value > 1e11 else value
-    m = re.match(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d", str(value or ""))
+    m = re.match(r"(\d{4}-\d\d-\d\d)(?:T(\d\d:\d\d:\d\d))?", str(value or ""))
     if not m:
         return None
-    return datetime.datetime.strptime(m.group(0), "%Y-%m-%dT%H:%M:%S") \
+    return datetime.datetime.strptime(
+        m.group(1) + " " + (m.group(2) or "00:00:00"), "%Y-%m-%d %H:%M:%S") \
         .replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
-def _monthly(amount, unit):
+def monthly(amount, unit):
     """A pay given by the hour, day, month or year, as a month's."""
-    if amount is None:
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
         return None
     unit = str(unit or "month").lower()
     factor = {"hour": HOURS, "day": DAYS, "year": 1 / 12}.get(unit, 1)
-    return round(float(amount) * factor)
+    return round(amount * factor)
 
 
-LEVELS = {"trainee": "intern", "intern": "intern", "internship": "intern",
-          "junior": "junior", "mid": "mid", "medium": "mid", "regular": "mid",
-          "senior": "senior", "expert": "lead", "lead": "lead",
-          "c_level": "lead", "manager": "lead", "head": "lead"}
-CONTRACTS = {"permanent": "uop", "employment": "uop", "b2b": "b2b"}
+def tidy(offer):
+    """An offer as every portal's is made to look (see above): known
+    values only, lists without repeats."""
+    out = {"portal": offer["portal"], "key": str(offer["key"]),
+           "url": offer["url"], "title": str(offer.get("title") or ""),
+           "company": str(offer.get("company") or "")}
+    out["cities"] = list(dict.fromkeys(
+        str(c).strip() for c in offer.get("cities") or []
+        if c and str(c).strip()))
+    out["mode"] = offer.get("mode") if offer.get("mode") in MODES else ""
+    out["salary_min"] = offer.get("salary_min")
+    out["salary_max"] = offer.get("salary_max") or offer.get("salary_min")
+    out["currency"] = offer.get("currency") if out["salary_max"] else None
+    out["contracts"] = sorted({c for c in offer.get("contracts") or []
+                               if c in CONTRACT_NAMES})
+    out["level"] = offer.get("level") if offer.get("level") in LEVEL_NAMES \
+        else ""
+    for key in ("skills", "nice"):
+        out[key] = list(dict.fromkeys(str(s) for s in offer.get(key) or []
+                                      if s))
+    out["posted"] = offer.get("posted")
+    out["points"] = [list(p) for p in dict.fromkeys(
+        tuple(p) for p in offer.get("points") or [])]
+    if offer.get("text"):
+        out["text"] = offer["text"][:config.OFFER_MAX_CHARS]
+    return out
 
 
-# --- the portals ---------------------------------------------------------
+# --- described portals -----------------------------------------------------
 
-def _justjoin(offer, site):
-    pay = [e for e in offer.get("employmentTypes") or []
-           if e.get("currencySource") == "original" and e.get("from")]
-    first = pay[0] if pay else {}
-    cities = [offer.get("city")] + [m.get("city") for m in
-                                    offer.get("multilocation") or []]
-    points = [[m["latitude"], m["longitude"]] for m in
-              [offer] + (offer.get("multilocation") or [])
-              if isinstance(m.get("latitude"), (int, float)) and
-              isinstance(m.get("longitude"), (int, float))]
-    url = ("https://justjoin.it/job-offer/" if site == "justjoin" else
-           "https://rocketjobs.pl/oferta-pracy/") + offer["slug"]
-    return {
-        "portal": site, "key": offer.get("guid") or offer["slug"],
-        "url": url, "title": offer.get("title") or "",
-        "company": offer.get("companyName") or "",
-        "cities": list(dict.fromkeys(c for c in cities if c)),
-        "mode": offer.get("workplaceType") if offer.get("workplaceType") in (
-            "remote", "hybrid", "office") else "",
-        "salary_min": _monthly(first.get("from"), first.get("unit")),
-        "salary_max": _monthly(first.get("to") or first.get("from"),
-                               first.get("unit")),
-        "currency": first.get("currency"),
-        "contracts": sorted({CONTRACTS.get(e.get("type"), "other")
-                             for e in offer.get("employmentTypes") or []}),
-        "level": LEVELS.get(str(offer.get("experienceLevel")).lower(), ""),
-        "skills": offer.get("requiredSkills") or [],
-        "nice": offer.get("niceToHaveSkills") or [],
-        "posted": _epoch(offer.get("publishedAt")),
-        "points": [list(p) for p in dict.fromkeys(map(tuple, points))],
-    }
+def values(item, path):
+    """The values at a path in an item: "a.b" (a dict's), "a[].b" (each of
+    a list's); [] when there's nothing."""
+    found = [item]
+    for part in path.split("."):
+        each = part.endswith("[]")
+        part = part[:-2] if each else part
+        nxt = []
+        for value in found:
+            if part:
+                value = value.get(part) if isinstance(value, dict) else None
+            if each and isinstance(value, list):
+                nxt.extend(value)
+            elif value is not None:
+                nxt.append(value)
+        found = nxt
+    return [v for v in found if v is not None and v != ""]
 
 
-def _search_justjoin(term, site="justjoin"):
-    base = "https://justjoin.it/job-offers/all-locations" \
-        if site == "justjoin" else \
-        "https://rocketjobs.pl/oferty-pracy/wszystkie-lokalizacje"
-    page = _get(base + "?" + urllib.parse.urlencode({"keyword": term}))
-    return [_justjoin(o, site) for o in _flight_offers(page) if o.get("slug")]
+def template(text, item):
+    """{path} of the item put in; |base64 or |url after the path encodes."""
+    def put(m):
+        found = values(item, m.group(1))
+        value = str(found[0]) if found else ""
+        if m.group(2) == "base64":
+            value = base64.b64encode(value.encode("utf-8")).decode("ascii")
+        elif m.group(2) == "url":
+            value = urllib.parse.quote(value, safe="")
+        return value
+    return re.sub(r"\{([^{}|]+)(?:\|(\w+))?\}", put, text)
 
 
-def _nofluffjobs(p):
-    location = p.get("location") or {}
-    places = [pl.get("city") for pl in location.get("places") or []
-              if pl.get("city") and pl.get("city") != "Remote"]
-    points = [[pl["geoLocation"]["latitude"], pl["geoLocation"]["longitude"]]
-              for pl in location.get("places") or []
-              if isinstance(pl.get("geoLocation"), dict) and
-              isinstance(pl["geoLocation"].get("latitude"), (int, float))]
-    salary = p.get("salary") or {}
-    tiles = (p.get("tiles") or {}).get("values") or []
-    mode = "remote" if location.get("fullyRemote") else \
-        location.get("type") if location.get("type") in (
-            "hybrid", "office", "remote") else ""
-    return {
-        "portal": "nofluffjobs", "key": p.get("id") or p["url"],
-        "url": "https://nofluffjobs.com/pl/job/" + p["url"],
-        "title": p.get("title") or "", "company": p.get("name") or "",
-        "cities": list(dict.fromkeys(places)), "mode": mode,
-        "salary_min": _monthly(salary.get("from"), salary.get("period")),
-        "salary_max": _monthly(salary.get("to") or salary.get("from"),
-                               salary.get("period")),
-        "currency": salary.get("currency"),
-        "contracts": [CONTRACTS.get(salary.get("type"), "other")]
-        if salary.get("type") else [],
-        "level": next((LEVELS[s.lower()] for s in p.get("seniority") or []
-                       if s.lower() in LEVELS), ""),
-        "skills": [t["value"] for t in tiles if t.get("type") == "requirement"],
-        "nice": [],
-        "posted": _epoch(p.get("renewed") or p.get("posted")),
-        "points": points,
-    }
+def field(item, spec):
+    """A field's values in an item, by its spec (see above)."""
+    if isinstance(spec, str):
+        found = values(item, spec)
+    elif "value" in spec:
+        value = spec["value"]
+        found = value if isinstance(value, list) else [value]
+    elif "template" in spec:
+        found = [template(spec["template"], item)]
+    elif "pairs" in spec:
+        found = [list(p) for p in zip(*(values(item, path)
+                                        for path in spec["pairs"]))]
+    else:
+        found = values(item, spec.get("path", ""))
+    if isinstance(spec, dict) and spec.get("split"):
+        found = [part.strip() for v in found
+                 for part in str(v).split(spec["split"]) if part.strip()]
+    if isinstance(spec, dict) and "map" in spec:
+        table = {str(k).lower(): v for k, v in spec["map"].items()}
+        found = [table[str(v).lower()] for v in found
+                 if str(v).lower() in table]
+    return [f for f in found if f is not None]
 
 
-def _search_nofluffjobs(term):
-    page = _get("https://nofluffjobs.com/pl/?" + urllib.parse.urlencode(
-        {"criteria": "keyword=" + term}))
-    for value in _nfj_state(page).values():
-        if isinstance(value, dict) and "postings" in value:
-            return [_nofluffjobs(p) for p in value["postings"] if p.get("url")]
-    return []
+LISTS = ("cities", "contracts", "skills", "nice", "points")
 
 
-def _bulldogjob(job):
-    pay = job.get("denominatedSalaryLong") or {}
-    numbers = [int(n.replace(" ", "")) for n in
-               re.findall(r"\d[\d ]*", pay.get("money") or "")] \
-        if not pay.get("hidden") else []
-    contracts = [c for c, on in (("uop", job.get("contractEmployment")),
-                                 ("b2b", job.get("contractB2b")),
-                                 ("other", job.get("contractOther"))) if on]
-    remote = job.get("remote") or (job.get("environment") or {}).get(
-        "remotePossible") == 100
-    return {
-        "portal": "bulldogjob", "key": job["id"],
-        "url": "https://bulldogjob.pl/companies/jobs/" + job["id"],
-        "title": job.get("position") or "",
-        "company": (job.get("company") or {}).get("name") or "",
-        "cities": [c.strip() for c in (job.get("city") or "").split(",")
-                   if c.strip()],
-        "mode": "remote" if remote else "",
-        "salary_min": numbers[0] if numbers else None,
-        "salary_max": numbers[-1] if numbers else None,
-        "currency": pay.get("currency") if numbers else None,
-        "contracts": contracts,
-        "level": LEVELS.get(str(job.get("experienceLevel")).lower(), ""),
-        "skills": job.get("technologyTags") or [], "nice": [],
-        "posted": None, "points": [],
-    }
+def described(portal, item):
+    """An offer from one item of a described portal's list; None without
+    a key, an address or a title."""
+    one = {}
+    for name_, spec in portal["fields"].items():
+        found = field(item, spec)
+        one[name_] = found if name_ in LISTS else (found[0] if found
+                                                   else None)
+    period = one.pop("period", None)
+    for key in ("salary_min", "salary_max"):
+        one[key] = monthly(one.get(key), period)
+    one["posted"] = epoch(one.get("posted"))
+    if one.get("text"):
+        one["text"] = text_of(str(one["text"])) if "<" in str(one["text"]) \
+            else str(one["text"])
+    one["portal"] = portal["id"]
+    if not one.get("key") or not one.get("url") or not one.get("title"):
+        return None
+    return tidy(one)
 
 
-def _search_bulldogjob(term):
-    page = _get("https://bulldogjob.pl/companies/jobs/s/skills," +
-                urllib.parse.quote(term))
-    data = _next_data(page)
-    # a skill it doesn't know isn't a filter: all its jobs come back
-    filters = (data.get("slugState") or {}).get("filters") or {}
-    if not filters.get("skills"):
-        return []
-    return [_bulldogjob(j) for j in data.get("jobs") or [] if j.get("id")]
+def _search_described(portal, term):
+    spec = portal["search"]
+    context = {"term": term}
+    params = {k: template(str(v), context)
+              for k, v in (spec.get("params") or {}).items()}
+    url = template(spec["url"], context)
+    if params:
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+    data = parse(get(url, spec.get("headers"), portal.get("delay"),
+                     cache=True), spec.get("format", "json"))
+    items = values(data, spec["items"]) if data is not None else []
+    offers = [o for o in (described(portal, i) for i in items
+                          if isinstance(i, dict)) if o]
+    if spec.get("filter"):
+        words = _words(term)
+        offers = [o for o in offers if words <= _words(" ".join(
+            [o["title"], o["company"]] + o["skills"] + [o.get("text", "")]))]
+    return offers
 
 
-SEARCH = {
-    "justjoin": _search_justjoin,
-    "rocketjobs": lambda term: _search_justjoin(term, "rocketjobs"),
-    "nofluffjobs": _search_nofluffjobs,
-    "bulldogjob": _search_bulldogjob,
-}
+def _words(text):
+    return set(re.findall(r"\w+", str(text).casefold()))
 
 
-def search(portal, term):
+def _details_described(portal, offer):
+    spec = portal["details"]
+    page = get(template(spec["url"], offer), spec.get("headers"),
+               portal.get("delay"))
+    data = parse(page, spec.get("format", "json"))
+    if data is None:
+        return ""
+    return "\n".join(text_of(str(v)) if "<" in str(v) else str(v)
+                     for path in spec.get("text") or []
+                     for v in values(data, path))
+
+
+# --- searching ------------------------------------------------------------
+
+def search(portal_id, term):
     """The offers a portal lists for a search term."""
+    portal = PORTALS.get(portal_id)
+    if not portal:
+        raise PortalError("no portal %s" % portal_id)
     try:
-        return SEARCH[portal](term)
+        if portal.get("parser"):
+            import sites
+            return [tidy(o) for o in sites.search(portal, term)]
+        return _search_described(portal, term)
     except PortalError:
         raise
-    except Exception as e:  # a page that changed its make
-        raise PortalError("%s, %r: unreadable page: %s" % (portal, term, e))
+    except Exception as e:  # a page or a file that changed its make
+        raise PortalError("%s, %r: unreadable: %r" % (portal_id, term, e))
 
 
 def details(offer):
-    """The offer's full text, from its page."""
-    page = _get(offer["url"])
-    parts = []
-    posting = _json_ld(page, "JobPosting")
-    if posting:
-        parts.append(text_of(posting.get("description")))
-        for key in ("skills", "qualifications", "responsibilities",
-                    "experienceRequirements"):
-            if isinstance(posting.get(key), str):
-                parts.append(text_of(posting[key]))
-    if offer["portal"] == "nofluffjobs":
-        for value in _nfj_state(page).values():
-            if isinstance(value, dict) and "requirements" in value:
-                req = value.get("requirements") or {}
-                musts = [m.get("value") for m in req.get("musts") or []]
-                nices = [m.get("value") for m in req.get("nices") or []]
-                if any(musts):
-                    parts.append("Wymagane: " + ", ".join(filter(None,
-                                                                 musts)))
-                if nices:
-                    parts.append("Mile widziane: " + ", ".join(
-                        filter(None, nices)))
-                parts.append(text_of(req.get("description")))
-                parts.append(text_of((value.get("details") or {}).get(
-                    "description")))
-                specs = value.get("specs")
-                tasks = specs.get("dailyTasks") if isinstance(specs, dict) \
-                    else None
-                if isinstance(tasks, list):
-                    parts.append("Codzienne zadania:\n" + "\n".join(
-                        "- " + text_of(t) for t in tasks if isinstance(t, str)))
-                break
-    text = "\n".join(p for p in parts if p).strip()
+    """The offer's full text, from the portal."""
+    portal = PORTALS.get(offer["portal"]) or {}
+    try:
+        if portal.get("details"):
+            text = _details_described(portal, offer)
+        else:
+            page = get(offer["url"], delay=portal.get("delay"))
+            text = jobposting_text(page)
+            if portal.get("parser"):
+                import sites
+                text = "\n".join(filter(None, [text, sites.details(
+                    portal, offer, page)]))
+    except PortalError:
+        raise
+    except Exception as e:
+        raise PortalError("%s: unreadable: %r" % (offer["url"], e))
+    text = text.strip()
     if not text:
         raise PortalError("no text on %s" % offer["url"])
     return text[:config.OFFER_MAX_CHARS]
+
+
+def jobposting_text(page):
+    """The text of the JSON-LD JobPosting a page has, "" if none."""
+    posting = json_ld(page, "JobPosting")
+    if not posting:
+        return ""
+    parts = [text_of(posting.get("description"))]
+    for key in ("skills", "qualifications", "responsibilities",
+                "experienceRequirements"):
+        if isinstance(posting.get(key), str):
+            parts.append(text_of(posting[key]))
+    return "\n".join(p for p in parts if p)

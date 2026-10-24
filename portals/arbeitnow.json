@@ -1,0 +1,34 @@
+{
+  "id": "arbeitnow",
+  "name": "Arbeitnow",
+  "country": "DE",
+  "site": "https://www.arbeitnow.com",
+  "default": false,
+  "delay": 5,
+  "search": {
+    "url": "https://www.arbeitnow.com/api/job-board-api",
+    "format": "json",
+    "items": "data[]",
+    "filter": true
+  },
+  "fields": {
+    "key": "slug",
+    "url": "url",
+    "title": "title",
+    "company": "company_name",
+    "cities": {"path": "location", "split": ","},
+    "mode": {"path": "remote", "map": {"true": "remote"}},
+    "contracts": {"path": "job_types[]", "map": {
+      "unbefristeter arbeitsvertrag": "uop", "befristeter arbeitsvertrag": "uop",
+      "festanstellung": "uop", "full time": "uop", "vollzeit": "uop",
+      "freelance": "b2b", "freiberuflich": "b2b", "contract": "b2b",
+      "internship": "other", "praktikum": "other", "werkstudent": "other", "minijob": "other"}},
+    "level": {"path": "job_types[]", "map": {
+      "praktikum": "intern", "internship": "intern", "berufseinsteiger": "junior",
+      "entry level": "junior", "junior": "junior", "berufserfahren": "mid", "mid level": "mid",
+      "senior": "senior", "senior level": "senior", "führungskraft": "lead", "management": "lead"}},
+    "skills": "tags[]",
+    "posted": "created_at",
+    "text": "description"
+  }
+}

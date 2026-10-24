@@ -105,7 +105,7 @@ def look(conn, user_id):
     if not terms:
         db.offers_done(conn, user_id)
         return
-    chosen = wishes["portals"] or config.PORTALS
+    chosen = chosen_portals(wishes)
     _set_status(user_id, "searching", 0, len(chosen) * len(terms))
     fresh = time.time() - config.OFFERS_INTERVAL * 3600
     done = 0
@@ -130,11 +130,20 @@ def look(conn, user_id):
     db.offers_done(conn, user_id)
 
 
+def chosen_portals(wishes):
+    """The portals the user chose (that are still there), or the default
+    ones."""
+    return [p for p in wishes["portals"] if p in portals.PORTALS] or \
+        portals.defaults()
+
+
 def match(conn, user_id, profile, wishes, analysis):
-    """Keeps for the user the offers seen lately that may do for them;
-    returns how many were added."""
+    """Keeps for the user the offers seen lately on their portals that may
+    do for them; returns how many were added."""
     since = time.time() - config.OFFER_DAYS * 86400
-    offers = sorted(db.recent_offers(conn, since),
+    chosen = set(chosen_portals(wishes))
+    offers = sorted((o for o in db.recent_offers(conn, since)
+                     if o["portal"] in chosen),
                     key=lambda o: o["first_seen"])
     skills = matching.skill_names(profile, wishes)
     matches = {m["offer_id"]: m for m in db.user_matches(conn, user_id)}
@@ -143,6 +152,9 @@ def match(conn, user_id, profile, wishes, analysis):
     for m in matches.values():
         if m["status"] != "new" or m["wanted"]:
             kept.append(m)
+            continue
+        if m["portal"] not in chosen:
+            gone.append(m["offer_id"])
             continue
         out, penalty, unmet = matching.judge(m, wishes, near(m))
         score = _score(m, wishes, skills, analysis, penalty)

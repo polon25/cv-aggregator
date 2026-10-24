@@ -1,0 +1,10 @@
+{
+  "id": "bulldogjob",
+  "name": "Bulldogjob",
+  "country": "PL",
+  "site": "https://bulldogjob.pl",
+  "default": true,
+  "parser": "bulldogjob",
+  "list_url": "https://bulldogjob.pl/companies/jobs/s/skills,",
+  "offer_url": "https://bulldogjob.pl/companies/jobs/"
+}

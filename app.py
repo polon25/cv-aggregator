@@ -25,6 +25,7 @@ import config
 import db
 import llm
 import offers
+import portals
 import web_server
 import worker
 
@@ -115,6 +116,7 @@ def main():
         return set_password(args.set_password)
     if args.set_key:
         return set_key(args.set_key)
+    portals.load()
     worker.start(max(1, config.WORKERS))
     offers.start()
     web_server.serve()

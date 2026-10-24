@@ -1,0 +1,10 @@
+{
+  "id": "justjoin",
+  "name": "JustJoin.it",
+  "country": "PL",
+  "site": "https://justjoin.it",
+  "default": true,
+  "parser": "justjoin",
+  "list_url": "https://justjoin.it/job-offers/all-locations",
+  "offer_url": "https://justjoin.it/job-offer/"
+}

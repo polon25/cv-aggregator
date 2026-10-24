@@ -1,0 +1,10 @@
+{
+  "id": "nofluffjobs",
+  "name": "No Fluff Jobs",
+  "country": "PL",
+  "site": "https://nofluffjobs.com/pl",
+  "default": true,
+  "parser": "nofluffjobs",
+  "list_url": "https://nofluffjobs.com/pl/",
+  "offer_url": "https://nofluffjobs.com/pl/job/"
+}

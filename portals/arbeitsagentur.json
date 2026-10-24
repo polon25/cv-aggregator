@@ -1,0 +1,60 @@
+{
+  "id": "arbeitsagentur",
+  "name": "Bundesagentur für Arbeit",
+  "country": "DE",
+  "site": "https://www.arbeitsagentur.de/jobsuche/",
+  "default": false,
+  "delay": 2,
+  "search": {
+    "url": "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs",
+    "params": {
+      "was": "{term}",
+      "size": "50",
+      "angebotsart": "1"
+    },
+    "headers": {
+      "X-API-Key": "jobboerse-jobsuche"
+    },
+    "format": "json",
+    "items": "ergebnisliste[]"
+  },
+  "fields": {
+    "key": "referenznummer",
+    "url": {
+      "template": "https://www.arbeitsagentur.de/jobsuche/jobdetail/{referenznummer}"
+    },
+    "title": "stellenangebotsTitel",
+    "company": "firma",
+    "cities": "stellenlokationen[].adresse.ort",
+    "points": {
+      "pairs": [
+        "stellenlokationen[].breite",
+        "stellenlokationen[].laenge"
+      ]
+    },
+    "salary_min": "gehaltsspanneVon",
+    "salary_max": "gehaltsspanneBis",
+    "period": {
+      "path": "verguetungsangabe",
+      "map": {
+        "JAHRESGEHALT": "year",
+        "MONATSGEHALT": "month",
+        "STUNDENLOHN": "hour"
+      }
+    },
+    "currency": {
+      "value": "EUR"
+    },
+    "posted": "datumErsteVeroeffentlichung"
+  },
+  "details": {
+    "url": "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails/{key|base64}",
+    "headers": {
+      "X-API-Key": "jobboerse-jobsuche"
+    },
+    "format": "json",
+    "text": [
+      "stellenangebotsBeschreibung"
+    ]
+  }
+}

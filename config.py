@@ -95,9 +95,10 @@ WORKERS = int(os.getenv("WORKERS") or "2")
 
 # --- job offers -------------------------------------------------------------
 
-# The portals searched (see portals.py), comma-separated.
-PORTALS = _list("PORTALS") or ["justjoin", "rocketjobs", "nofluffjobs",
-                               "bulldogjob"]
+# The portals there are: a JSON file each in portals/ and in PORTALS_DIR
+# (see portals.py); PORTALS, comma-separated, keeps only these.
+PORTALS = _list("PORTALS")
+PORTALS_DIR = os.getenv("PORTALS_DIR") or os.path.join(DATA_DIR, "portals")
 # Hours between two searches of the portals.
 OFFERS_INTERVAL = float(os.getenv("OFFERS_INTERVAL") or "6")
 # Seconds at least between two requests to the same portal.

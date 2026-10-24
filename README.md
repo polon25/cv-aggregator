@@ -67,7 +67,8 @@ Settings (`.env`, see [.env.example](.env.example)):
 | `MAX_CV_MB` | 5 | largest file accepted |
 | `MAX_CV_CHARS` | 40000 | a CV's text is cut to this many characters for the model |
 | `WORKERS` | 2 | threads reading CVs and writing analyses |
-| `PORTALS` | all four | the portals searched, comma-separated: `justjoin`, `rocketjobs`, `nofluffjobs`, `bulldogjob` |
+| `PORTALS` | all there are | keeps only these portals (their ids, comma-separated) |
+| `PORTALS_DIR` | `data/portals` | more portals, a JSON file each, beside those in `portals/` (one of the same id replaces it); see "Portals" |
 | `OFFERS_INTERVAL` | 6 | hours between searches for a user (a portal searched for a term less than this ago, for anyone, isn't asked again) |
 | `PORTAL_DELAY` | 3 | seconds at least between two requests to the same portal |
 | `OFFERS_MAX_TERMS` | 12 | search terms a user's wishes give at most |
@@ -193,16 +194,88 @@ teraz", or saving "Czego szukam"):
 
 ## Portals
 
-Pages are read as a browser gets them – no private API, nothing
-`robots.txt` disallows (no `/api/` paths) – by a client that says who it
-is (`CVAggregator/0.1 (...)`), a request every `PORTAL_DELAY` seconds at
-most per portal:
+Every portal is a JSON file in [portals/](portals/) – or in `PORTALS_DIR`
+(`data/portals/` by default, kept on the server, not in the repository),
+where a file adds a portal or replaces the shipped one of the same `id`.
+A portal marked `"default": true` is searched for users who choose none;
+the others only for those who tick them in "Czego szukam". Users get the
+offers of their portals only.
 
-| Portal | List | An offer |
-|---|---|---|
-| JustJoin.it, RocketJobs (one platform) | `?keyword=` search; 50 offers with company, pay, contracts, level, skills, in the page's Next.js flight data | JSON-LD `JobPosting` |
-| No Fluff Jobs | `?criteria=keyword=` search; 20 offers with company, pay, level, skills, in the page's state | the page's state: requirements, description, tasks |
-| Bulldogjob | `/s/skills,<term>`: by skill only (a term that isn't one of its skills finds nothing); 50 offers in `__NEXT_DATA__` | JSON-LD `JobPosting` |
+Portals are read as their sites allow – their APIs, or pages as a browser
+gets them, nothing `robots.txt` disallows – by a client that says who it
+is (`CVAggregator/0.1 (...)`), a request every `PORTAL_DELAY` seconds (or
+the portal's `delay`) at most:
+
+| Portal | Country | How | List | An offer |
+|---|---|---|---|---|
+| JustJoin.it, RocketJobs (one platform) | PL | parser `justjoin` | `?keyword=` search; 50 offers with company, pay, contracts, level, skills, in the page's Next.js flight data | JSON-LD `JobPosting` |
+| No Fluff Jobs | PL | parser `nofluffjobs` | `?criteria=keyword=` search; 20 offers with company, pay, level, skills, in the page's state | the page's state: requirements, description, tasks |
+| Bulldogjob | PL | parser `bulldogjob` | `/s/skills,<term>`: by skill only (a term that isn't one of its skills finds nothing); 50 offers in `__NEXT_DATA__` | JSON-LD `JobPosting` |
+| Bundesagentur für Arbeit (Jobsuche) | DE | described | its public API (v6), 50 offers with place, coordinates, pay | the API's job details |
+| Arbeitnow | DE | described | its free public API: the 300 latest offers, with their text, kept if they have every word of the term (it can't be searched) | in the list |
+
+Sites that need code have a parser in [sites.py](sites.py); the file gives
+it what it takes (e.g. the site's addresses, so that RocketJobs is
+JustJoin.it's parser at other addresses). Portals whose lists come as JSON
+– an API, or JSON in the page – are described in the file alone, with no
+code (see [portals.py](portals.py) for every option):
+
+```json
+{
+  "id": "arbeitsagentur", "name": "Bundesagentur für Arbeit",
+  "country": "DE", "site": "https://www.arbeitsagentur.de/jobsuche/",
+  "default": false, "delay": 2,
+  "search": {
+    "url": "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs",
+    "params": {"was": "{term}", "size": "50"},
+    "headers": {"X-API-Key": "jobboerse-jobsuche"},
+    "format": "json",
+    "items": "ergebnisliste[]"
+  },
+  "fields": {
+    "key": "referenznummer",
+    "url": {"template": "https://www.arbeitsagentur.de/jobsuche/jobdetail/{referenznummer}"},
+    "title": "stellenangebotsTitel",
+    "company": "firma",
+    "cities": "stellenlokationen[].adresse.ort",
+    "points": {"pairs": ["stellenlokationen[].breite", "stellenlokationen[].laenge"]},
+    "salary_min": "gehaltsspanneVon",
+    "salary_max": "gehaltsspanneBis",
+    "period": {"path": "verguetungsangabe", "map": {"JAHRESGEHALT": "year", "MONATSGEHALT": "month"}},
+    "currency": {"value": "EUR"},
+    "posted": "datumErsteVeroeffentlichung"
+  },
+  "details": {
+    "url": "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails/{key|base64}",
+    "headers": {"X-API-Key": "jobboerse-jobsuche"},
+    "text": ["stellenangebotsBeschreibung"]
+  }
+}
+```
+
+- `search`: the list's address and query (`{term}` is the search term),
+  headers, where its JSON is (`format`: `json` – the answer is JSON,
+  `next_data` – Next.js' `__NEXT_DATA__`, `script:<id>` – the JSON in a
+  `<script id>`, `json_ld`), the path to its offers (`items`), and
+  `"filter": true` for a portal that can't be searched (its offers are
+  kept if they have every word of the term).
+- `fields`: for each of an offer's fields (`key`, `url`, `title`,
+  `company`, `cities`, `mode`, `salary_min`, `salary_max`, `period`,
+  `currency`, `contracts`, `level`, `skills`, `nice`, `posted`, `points`,
+  `text`), a path in an item (`a.b`, `a[].b` for each of a list), or
+  `{"path"}`, `{"template": "…{path}…"}`, `{"value": …}` or `{"pairs":
+  [lat path, lon path]}`, with `"split"` (a separator) and `"map"`
+  ({portal's value: ours}; values not in it are dropped) if needed. Ours
+  are `remote`/`hybrid`/`office`, `uop`/`b2b`/`other`,
+  `intern`/`junior`/`mid`/`senior`/`lead`, a `period` of
+  `hour`/`day`/`month`/`year` (pay is made a month's).
+- `details` (optional): where an offer's text is (an address template;
+  `{key|base64}`, `{…|url}` encode) and the paths to it; without it the
+  offer's page is read for JSON-LD `JobPosting` – or the list's `text` is
+  used, if it has it.
+
+A file that can't be read, or has neither `parser` nor `search`, is left
+out with an error in the log.
 
 Not searched: pracuj.pl and theprotocol.it answer programs with a
 Cloudflare challenge (HTTP 403), which isn't to be got round; LinkedIn has

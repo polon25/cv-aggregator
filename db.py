@@ -688,19 +688,23 @@ def record_search(conn, portal, term, found=None, error=None):
 
 def save_offers(conn, offers):
     """Keeps offers a portal listed (new ones added, known ones updated,
-    their text kept)."""
+    their text kept, or set when the list gives it)."""
     now = time.time()
     with conn:
         for o in offers:
             data = json.dumps({k: v for k, v in o.items()
-                               if k not in ("portal", "key", "url")},
+                               if k not in ("portal", "key", "url", "text")},
                               ensure_ascii=False)
             conn.execute(
                 "INSERT INTO offers (portal, key, url, data, first_seen, "
-                "last_seen) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (portal, "
-                "key) DO UPDATE SET url = excluded.url, data = excluded.data, "
-                "last_seen = excluded.last_seen",
-                (o["portal"], str(o["key"]), o["url"], data, now, now))
+                "last_seen, details, details_at) VALUES (?, ?, ?, ?, ?, ?, "
+                "?, ?) ON CONFLICT (portal, key) DO UPDATE SET url = "
+                "excluded.url, data = excluded.data, last_seen = "
+                "excluded.last_seen, details = COALESCE(excluded.details, "
+                "offers.details), details_at = COALESCE(excluded.details_at, "
+                "offers.details_at)",
+                (o["portal"], str(o["key"]), o["url"], data, now, now,
+                 o.get("text"), now if o.get("text") else None))
 
 
 def _offer_row(row):

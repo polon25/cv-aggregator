@@ -1,0 +1,10 @@
+{
+  "id": "rocketjobs",
+  "name": "RocketJobs",
+  "country": "PL",
+  "site": "https://rocketjobs.pl",
+  "default": true,
+  "parser": "justjoin",
+  "list_url": "https://rocketjobs.pl/oferty-pracy/wszystkie-lokalizacje",
+  "offer_url": "https://rocketjobs.pl/oferta-pracy/"
+}
