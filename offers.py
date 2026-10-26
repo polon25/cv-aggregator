@@ -48,6 +48,8 @@ import worker
 log = logging.getLogger("offers")
 
 CHECK_SECONDS = 300
+# Seconds before a mailbox that couldn't be read is tried again.
+MAIL_RETRY = 120
 # A job alert that no model could read is tried again this many times,
 # after this many seconds more each time.
 ALERT_ATTEMPTS = 5
@@ -118,20 +120,25 @@ def _read_mail(conn):
     """Reads the job alerts that came to users' mailboxes since the last
     time (alerts.py), each user's every config.MAIL_INTERVAL minutes; each
     alert becomes an import. Alerts read and kept before go to the trash
-    (unless the user keeps them)."""
+    (unless the user keeps them). A mailbox that couldn't be read (e.g. the
+    network not up yet after the server started) is tried again in
+    MAIL_RETRY seconds, not after the whole interval."""
+    now = time.time()
     for user_id in db.mailbox_users(conn):
         box, password = db.mailbox(conn, user_id)
-        if not box or not password or time.time() - (
-                box.get("read_at") or 0) < config.MAIL_INTERVAL * 60:
+        if not box or not password or \
+                now - (box.get("read_at") or 0) < config.MAIL_INTERVAL * 60 \
+                or now - (box.get("tried_at") or 0) < MAIL_RETRY:
             continue
+        box["tried_at"] = now
         try:
             pages, box = alerts.collect(box, password)
             box.pop("error", None)
+            box["read_at"] = now
         except (alerts.AlertsError, imaplib.IMAP4.error, OSError) as e:
             log.warning("Mailbox of user %d not read: %s", user_id, e)
             box["error"] = str(e)[:300]
             pages = []
-        box["read_at"] = time.time()
         for page in pages:
             db.add_import(conn, user_id, page)
         if box.get("trash", True) and not box.get("error"):
