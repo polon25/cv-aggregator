@@ -13,7 +13,8 @@
     "link": "/jobs/view/(?:[^/?#]*-)?(\\d+)|[?&]currentJobId=(\\d+)",
     "ids": [
       "data-occludable-job-id",
-      "data-job-id"
+      "data-job-id",
+      "componentkey^=\"job-card-component-ref-\""
     ]
   }
 }

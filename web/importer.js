@@ -8,8 +8,10 @@
 // The bookmarklet's code, run on the portal's page. It mustn't use anything
 // outside itself: it's turned into a javascript: address. `specs`: the
 // portals' {link: a regex an offer's link matches, its first non-empty
-// group the offer's id; ids: attributes holding an offer's id (tiles not
-// drawn yet have nothing else); url: an offer's address from {key}}.
+// group the offer's id; ids: attributes holding an offer's id at their
+// end, as attribute selectors without the brackets (tiles not drawn yet,
+// or LinkedIn's with no link, have nothing else); url: an offer's address
+// from {key}}.
 //
 // It opens the app's tab at once (a click allows that, a later moment
 // not), scrolls the list the offers are in from top to bottom, so that a
@@ -44,7 +46,8 @@ async function sendPage(app, specs) {
   };
   var idOf = function (el) {
     for (var i = 0; i < attrs.length; i++) {
-      var m = /(\d{5,})\D*$/.exec(el.getAttribute(attrs[i]) || "");
+      if (!el.matches("[" + attrs[i] + "]")) continue;
+      var m = /(\d{5,})\D*$/.exec(el.getAttribute(attrs[i].split(/[~|^$*]?=/)[0]) || "");
       if (m) {
         var spec = specs.filter(function (s) { return (s.ids || []).indexOf(attrs[i]) >= 0; })[0];
         return { key: specs.indexOf(spec) + ":" + m[1], url: (spec.url || "").replace("{key}", m[1]) };

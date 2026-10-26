@@ -18,8 +18,9 @@ may add portals or replace shipped ones by their id):
      id, "url": an offer's address from {key}, if it should be made so,
      and for the bookmarklet (web/importer.js): "link": a regex a link to
      an offer matches, its first non-empty group the offer's id, "ids":
-     attributes that hold an offer's id (tiles not drawn yet have only
-     these)}}
+     attributes that hold an offer's id, at their end (tiles not drawn
+     yet, or with no link, have only these), as CSS attribute selectors
+     without the brackets: a name, or e.g. 'name^="prefix-"'}}
 
 A described portal:
 
