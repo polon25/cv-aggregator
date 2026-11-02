@@ -787,6 +787,28 @@ def fmt_span(item):
     return start or end
 
 
+def item_lines(section, item):
+    """An item of a section with fields of its own (not skills, languages
+    or interests) as lines of text: its dates and first fields, then the
+    rest, indented."""
+    spec = FIELDS[section]
+    when = fmt_span(item) if "start" in item else fmt_date(
+        item.get("date") or "")
+    head = [x for x in (item.get(f[0]) for f in spec[:3]
+                        if f[2] == "text") if x]
+    lines = [(when + ": " if when else "") + ", ".join(head)]
+    for key, label_, kind, _ in spec[3:]:
+        value = item.get(key)
+        if not value or kind in ("date", "bool") or \
+                key in [f[0] for f in spec[:3]]:
+            continue
+        if kind == "list":
+            lines.append("  %s: %s" % (label_, "; ".join(value)))
+        else:
+            lines.append("  " + value.replace("\n", "\n  "))
+    return lines
+
+
 def text(profile, about="", goals=""):
     """The profile as plain text, as compact as it can be."""
     p = {k: v["value"] for k, v in profile["personal"].items()}
@@ -813,21 +835,9 @@ def text(profile, about="", goals=""):
                              ", ".join(names))
             continue
         for i in items:
-            when = fmt_span(i) if "start" in i else fmt_date(
-                i.get("date") or "")
-            head = [x for x in (i.get(f[0]) for f in spec[:3]
-                                if f[2] == "text") if x]
-            lines.append("- " + (when + ": " if when else "") +
-                         ", ".join(head))
-            for key, label_, kind, _ in spec[3:]:
-                value = i.get(key)
-                if not value or kind in ("date", "bool") or \
-                        key in [f[0] for f in spec[:3]]:
-                    continue
-                if kind == "list":
-                    lines.append("  %s: %s" % (label_, "; ".join(value)))
-                else:
-                    lines.append("  " + value.replace("\n", "\n  "))
+            first, *rest = item_lines(section, i)
+            lines.append("- " + first)
+            lines += rest
     if about:
         lines += ["", "## Kandydat o sobie", about]
     if goals:

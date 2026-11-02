@@ -9,8 +9,9 @@ offers weren't looked for in OFFERS_INTERVAL hours (or who asked for it):
    (matching.judge; places within the user's distance of their cities, by
    geo.py) and looks promising enough (matching.prescore, less the points
    of the wishes it doesn't meet) is kept for the user, once even when
-   two portals list it; offers kept earlier and still unmarked are judged
-   again by the wishes as they are (rated ones that no longer do go too);
+   two portals list it; offers kept earlier and still unmarked (with no
+   CV made for them) are judged again by the wishes as they are (rated
+   ones that no longer do go too);
 3. review: a model rates how the most promising ones not rated since the
    wishes last changed fit the candidate (agents.review_offer; the
    points for unmet wishes are taken off its score when it's shown),
@@ -242,7 +243,7 @@ def match(conn, user_id, profile, wishes, analysis):
     near = _nearness(conn, wishes, offers + list(matches.values()))
     kept, gone, rescored = [], [], []
     for m in matches.values():
-        if m["status"] != "new" or m["wanted"]:
+        if m["status"] != "new" or m["wanted"] or m["has_cv"]:
             kept.append(m)
             continue
         if portals.searchable(m["portal"]) and m["portal"] not in chosen:
@@ -331,6 +332,20 @@ def day_start(row):
     return max(midnight, row["wishes_at"] or 0)
 
 
+def offer_text(conn, offer):
+    """The offer's full text: kept, or fetched from its portal (and kept);
+    "" or None when there's none."""
+    text = db.offer_details(conn, offer["offer_id"])
+    if text is None and portals.searchable(offer["portal"]):
+        try:
+            text = portals.details(offer)
+        except portals.PortalError as e:
+            log.info("No text for offer %d: %s", offer["offer_id"], e)
+            text = ""
+        db.save_offer_details(conn, offer["offer_id"], text)
+    return text
+
+
 def review(conn, user_id, profile, row):
     """Has a model rate the user's offers due for it."""
     account = db.account(conn, user_id)
@@ -350,14 +365,7 @@ def review(conn, user_id, profile, row):
                                     criteria=False)
     for n, offer in enumerate(queue, 1):
         _set_status(user_id, "reviewing", n, len(queue))
-        text = db.offer_details(conn, offer["offer_id"])
-        if text is None and portals.searchable(offer["portal"]):
-            try:
-                text = portals.details(offer)
-            except portals.PortalError as e:
-                log.info("No text for offer %d: %s", offer["offer_id"], e)
-                text = ""
-            db.save_offer_details(conn, offer["offer_id"], text)
+        text = offer_text(conn, offer)
         try:
             result, model = agents.review_offer(profile_text, wishes_text,
                                                 offer, text, account)

@@ -70,6 +70,11 @@ reply is JSON (but uploads and downloads of CV files); errors are
     POST /api/offers/<id>/review
                                has a model rate the offer (beyond the day's
                                number)
+    POST /api/offers/<id>/cv   {language: pl, en or "" (the offer's)}: has a
+                               CV made for the offer (resume.py)
+    POST /api/offers/<id>/cv/delete
+    GET  /api/offers/<id>/cv.pdf, /api/offers/<id>/cv.tex
+                               the CV made for it, compiled or in LaTeX
     POST /api/cvs?name=<file name>
                                the file as the request body: uploads a CV,
                                which is then read in the background
@@ -99,6 +104,7 @@ import market
 import matching
 import offers
 import portals
+import resume
 import worker
 
 log = logging.getLogger("web")
@@ -232,6 +238,7 @@ MATCH_FIELDS = ("offer_id", "portal", "url", "title", "company", "cities",
 def _offers_json(conn, user):
     profile, row, _ = db.built_profile(conn, user["id"])
     skills = matching.skill_names(profile, row["wishes"])
+    resumes = db.user_resumes(conn, user["id"])
     matches = []
     for m in db.user_matches(conn, user["id"]):
         item = {k: m.get(k) for k in MATCH_FIELDS}
@@ -250,6 +257,8 @@ def _offers_json(conn, user):
         item["model"] = (m["model"] or {}).get("model")
         item["have"] = [s for s in m["skills"]
                         if matching.has_skill(s, skills)]
+        cv = resumes.get(m["offer_id"])
+        item["cv"] = cv and dict(cv, model=(cv["model"] or {}).get("model"))
         matches.append(item)
     paths = (row["analysis"] or {}).get("career_paths") or []
     return {
@@ -272,6 +281,7 @@ def _offers_json(conn, user):
                   "renewed": bool(row["wishes_at"]) and
                   offers.day_start(row) == row["wishes_at"]},
         "more": MORE_REVIEWS,
+        "cv_languages": resume.LANGUAGES,
         "weak_score": matching.WEAK_SCORE,
         "fresh": time.time() - 2 * 86400,
         "matches": matches,
@@ -549,6 +559,15 @@ class Handler(SimpleHTTPRequestHandler):
                                    if x["offer_id"] in ids]
                 data["import"] = item
                 return data
+            m = re.fullmatch(r"(\d+)/cv\.(pdf|tex)", action)
+            found = m and db.resume_file(conn, user["id"], int(m.group(1)),
+                                         m.group(2))
+            if found:
+                self._file(found[0] if m.group(2) == "pdf"
+                           else found[0].encode("utf-8"), found[1],
+                           "application/pdf" if m.group(2) == "pdf"
+                           else "application/x-tex")
+                return None
             raise HttpError(404, "Nie ma takiej strony.")
         if method != "POST":
             raise HttpError(405, "Niedozwolona metoda.")
@@ -580,7 +599,7 @@ class Handler(SimpleHTTPRequestHandler):
                 raise db.Error("Nie ma ofert czekających na ocenę.")
             offers.wake()
             return _offers_json(conn, user)
-        m = re.fullmatch(r"(\d+)/(status|review)", action)
+        m = re.fullmatch(r"(\d+)/(status|review|cv|cv/delete)", action)
         if not m or not db.get_match(conn, user["id"], int(m.group(1))):
             raise HttpError(404, "Nie ma takiej oferty.")
         offer_id = int(m.group(1))
@@ -588,6 +607,19 @@ class Handler(SimpleHTTPRequestHandler):
             if body.get("status") not in MATCH_STATUSES:
                 raise HttpError(400, "Nieprawidłowy stan.")
             db.set_match_status(conn, user["id"], offer_id, body["status"])
+        elif m.group(2) == "cv":
+            language = body.get("language") or ""
+            if language and language not in resume.LANGUAGES:
+                raise HttpError(400, "Nieprawidłowy język.")
+            self._can_review(conn, user)
+            if not resume.can_compile():
+                raise db.Error(worker.NO_LATEX)
+            db.request_resume(conn, user["id"], offer_id, language)
+            log.info("%s asked for a CV for offer %d", user["username"],
+                     offer_id)
+            worker.wake()
+        elif m.group(2) == "cv/delete":
+            db.delete_resume(conn, user["id"], offer_id)
         else:
             self._can_review(conn, user)
             db.want_review(conn, user["id"], offer_id)
@@ -674,9 +706,9 @@ class Handler(SimpleHTTPRequestHandler):
             return None
         return cookie[COOKIE].value if COOKIE in cookie else None
 
-    def _file(self, data, filename):
+    def _file(self, data, filename, kind="application/octet-stream"):
         self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Content-Disposition", "attachment; filename*=UTF-8''"
                          + urllib.parse.quote(filename))

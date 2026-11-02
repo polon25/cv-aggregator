@@ -1,8 +1,9 @@
 "use strict";
 // The offers page: what the user looks for ("Czego szukam"), and the job
 // offers kept for them, rated by a model, in tabs by the user's mark. While
-// the portals are searched or offers rated, the page asks for news every
-// few seconds. Uses the helpers of app.js (el, api, fill, show...).
+// the portals are searched, offers rated or CVs made for them, the page asks
+// for news every few seconds. Uses the helpers of app.js (el, api, fill,
+// show...).
 
 const OFFERS_POLL_MS = 4000;
 // An offer's score is the model's, less the points of the user's wishes it
@@ -34,6 +35,9 @@ class OffersView {
     this.showWeak = false;
     this.editing = false; // the wishes' form has unsaved changes
     this.wishesOpen = null;
+    this.cvOpen = new Set(); // offers whose "CV pod tę ofertę" is shown
+    this.cvLanguage = {}; // offer id -> the language chosen for its CV
+    this.cvDropped = new Set(); // offers whose CV's left-out list is open
   }
 
   start() {
@@ -64,7 +68,8 @@ class OffersView {
     this.data = data;
     this.render(!was);
     clearTimeout(this.timer);
-    const busy = data.status || data.wanted || data.matches.some((m) => m.wanted && m.score === null);
+    const busy = data.status || data.wanted || data.matches.some((m) => (m.wanted && m.score === null) ||
+      (m.cv && (m.cv.status === "pending" || m.cv.status === "working")));
     this.timer = setTimeout(() => this.load(), busy ? OFFERS_POLL_MS : 60000);
   }
 
@@ -356,6 +361,7 @@ class OffersView {
         el("ul", { class: "cons" }, r.cons.map((p) => el("li", {}, p)))),
       m.review_error && el("p", { class: "bad small" }, "⚠ " + m.review_error),
       m.wanted && el("p", { class: "thinking dots small" }, "Czeka na ocenę modelu"),
+      this.cvBlock(m),
       el("div", { class: "offer-actions" },
         mark("interested", "★ Interesuje mnie", "", "Zapisz w „Interesujące”"),
         mark("applied", "✓ Aplikuję", "", "Zapisz w „Aplikowane”"),
@@ -363,8 +369,60 @@ class OffersView {
         (m.score === null || m.stale) && !m.wanted && el("button", {
           class: "btn small", type: "button", onclick: () => this.act("offers/" + m.offer_id + "/review"),
         }, m.stale ? "Oceń ponownie" : "Oceń"),
+        !m.cv && !this.cvOpen.has(m.offer_id) && el("button", {
+          class: "btn small", type: "button", title: "CV dopasowane do tej oferty, z faktów z profilu, jako PDF",
+          onclick: () => { this.cvOpen.add(m.offer_id); this.renderList(); },
+        }, "📄 CV pod ofertę"),
         el("span", { class: "muted small offer-dates" },
           (m.posted ? "dodana " + fmtTime(m.posted).slice(0, 10) : "znaleziona " + fmtTime(m.first_seen).slice(0, 10)) +
           (m.model ? " · oceniona przez " + m.model : ""))));
+  }
+
+  // A CV made for the offer from the profile (resume.py on the server): how
+  // to have one made, its state, its files and what was left out of it.
+  cvBlock(m) {
+    const cv = m.cv;
+    const id = m.offer_id;
+    if (!cv && !this.cvOpen.has(id)) return null;
+    const names = this.data.cv_languages;
+    const busy = cv && (cv.status === "pending" || cv.status === "working");
+    const language = el("select", {
+      class: "cv-language", "aria-label": "Język CV",
+      onchange: (e) => { this.cvLanguage[id] = e.target.value; },
+    }, el("option", { value: "" }, "w języku oferty"),
+    Object.entries(names).map(([key, name]) => el("option", { value: key }, name)));
+    language.value = this.cvLanguage[id] || "";
+    const dropped = cv && cv.dropped ? cv.dropped : [];
+    return el("div", { class: "offer-cv" },
+      el("h3", {}, "CV pod tę ofertę"),
+      !cv && el("p", { class: "hint" }, "Model wybierze z profilu to, co najważniejsze dla tej oferty, i napisze " +
+        "z tego CV – wyłącznie z faktów, które są w profilu. Potem program i drugi model sprawdzają każde zdanie; " +
+        "czego profil nie potwierdza, wypada z CV. Wynik to PDF w układzie twoich CV (LaTeX, moderncv)."),
+      busy && el("p", { class: "thinking dots small" }, cv.status === "pending" ? "CV czeka w kolejce"
+        : "Tworzę CV: model pisze, drugi sprawdza z profilem, LaTeX składa PDF"),
+      cv && cv.status === "failed" && el("p", { class: "bad small" }, "⚠ " + cv.error),
+      cv && cv.made_at && el("div", { class: "cv-files" },
+        el("a", { class: "btn small primary", href: "api/offers/" + id + "/cv.pdf", download: "" }, "⬇ Pobierz PDF"),
+        el("a", { class: "btn small", href: "api/offers/" + id + "/cv.tex", download: "",
+                  title: "Źródło w LaTeX-u, do własnych poprawek" }, "LaTeX"),
+        el("span", { class: "muted small" }, [names[cv.language] || cv.language, fmtTime(cv.made_at),
+                                              cv.model].filter(Boolean).join(" · "))),
+      dropped.length > 0 && el("details", {
+        class: "cv-dropped", open: this.cvDropped.has(id),
+        ontoggle: (e) => { if (e.target.open) this.cvDropped.add(id); else this.cvDropped.delete(id); },
+      }, el("summary", {}, "Poprawione lub pominięte, bo profil tego nie potwierdzał (" + dropped.length + ")"),
+      el("ul", {}, dropped.map((d) => el("li", {}, d.fix ? [el("s", {}, d.text), " → ", d.fix] : el("s", {}, d.text),
+        el("span", { class: "muted" }, " – " + d.why))))),
+      !busy && el("div", { class: "cv-make" }, language,
+        el("button", {
+          class: "btn small" + (cv ? "" : " primary"), type: "button",
+          onclick: () => this.act("offers/" + id + "/cv", { language: language.value }),
+        }, cv ? "Utwórz ponownie" : "Utwórz CV"),
+        cv ? el("button", {
+          class: "link danger", type: "button",
+          onclick: () => { if (confirm("Usunąć CV utworzone dla tej oferty?")) this.act("offers/" + id + "/cv/delete"); },
+        }, "Usuń CV") : el("button", {
+          class: "link", type: "button", onclick: () => { this.cvOpen.delete(id); this.renderList(); },
+        }, "Anuluj")));
   }
 }

@@ -24,10 +24,13 @@ may fit, and a model rates the most promising (0–100, with what fits and
 what's missing), as many a day as the user allows. Offers can be marked as
 interesting, applied for or rejected. (pracuj.pl and theprotocol.it turn
 programs away, and LinkedIn has no public job search; see "Portals".)
+For any offer the app can make a CV tailored to it, as a PDF, out of the
+profile's facts alone (see "CVs for offers").
 
 Models think; the program does whatever it can do itself (see "How a
 profile is made"). Only the standard library is needed, plus `pdftotext`
-(poppler-utils) for PDFs and, for DOC and RTF only, LibreOffice. Runs on
+(poppler-utils) for PDFs, for DOC and RTF only, LibreOffice, and, for CVs
+made for offers, `pdflatex` with the moderncv class (TeX Live). Runs on
 Python 3.8+. The models are [OpenRouter](https://openrouter.ai)'s, with
 every user's own key (given in the page's settings), or any other
 OpenAI-compatible API's.
@@ -40,6 +43,8 @@ model, even when the paid ones fail).
 
 ```bash
 sudo apt install poppler-utils     # pdftotext
+# CVs for offers (moderncv, Polish, TeX Gyre fonts):
+sudo apt install texlive-latex-extra texlive-lang-polish texlive-fonts-recommended
 cp .env.example .env               # all of it is optional
 python3 app.py                     # http://<host>:8075
 ```
@@ -66,7 +71,8 @@ Settings (`.env`, see [.env.example](.env.example)):
 | `MAX_CVS` | 6 | CVs a user may keep |
 | `MAX_CV_MB` | 5 | largest file accepted |
 | `MAX_CV_CHARS` | 40000 | a CV's text is cut to this many characters for the model |
-| `WORKERS` | 2 | threads reading CVs and writing analyses |
+| `WORKERS` | 2 | threads reading CVs, writing analyses and making CVs for offers |
+| `PDFLATEX` | `pdflatex` | the LaTeX compiler CVs for offers are made with |
 | `PORTALS` | all there are | keeps only these portals (their ids, comma-separated) |
 | `PORTALS_DIR` | `data/portals` | more portals, a JSON file each, beside those in `portals/` (one of the same id replaces it); see "Portals" |
 | `OFFERS_INTERVAL` | 6 | hours between searches for a user (a portal searched for a term less than this ago, for anyone, isn't asked again) |
@@ -208,6 +214,40 @@ and as the candidate's if their profile has it – as it does in the
 offers' skills and their score. A model then writes 3–5 steps to take
 (`agents.advise`), from those numbers and what it found missing in the
 best offers – on request, and once a day after offers are rated.
+
+## CVs for offers
+
+Under an offer, "📄 CV pod ofertę" has a CV made for it
+([resume.py](resume.py)), in Polish, English or the offer's language,
+laid out as the author's own CVs: LaTeX, the moderncv class, "classic"
+style, compiled with `pdflatex`. The user downloads the PDF, or the LaTeX
+to change it by hand. A CV mustn't lie, so a model only chooses and
+words; everything else is the program's:
+
+1. A model (`agents.tailor_cv`) gets the profile, its items named by refs
+   ("E1" the first job...), the offer and what the program counted (years
+   of experience), and plans the CV: a headline, a short summary, a few
+   points on each job and its technologies, fields in the CV's language
+   (titles, schools...), the skills to show, grouped. Every job and
+   school goes in, so that there are no gaps; dates, employers, contact
+   details, certificates' dates, publications are copied from the
+   profile; a doctorate found in the profile is written at the name ("dr
+   inż." / "Ph.D.").
+2. The program checks the plan: skills only by the profile's names, a
+   job's technologies only if that job names them, a skill level only if
+   the profile gives all the group's skills that level, and no text may
+   name a skill the offer asks for that the profile doesn't mention, nor
+   a number the profile doesn't hold.
+3. A second model (`agents.check_cv`) gets every sentence and translated
+   field with what it was written from and names the ones the profile
+   doesn't back (an inflated role, years of experience given to one job,
+   a task that isn't there), writing them anew so that it does where it
+   can; that goes in only if the program finds nothing wrong with it
+   either, else the sentence is left out.
+
+The page lists what was changed or left out, and why. CVs are made by the
+background threads, one at a time; an offer with a CV is kept for the
+user even when it no longer fits what they look for.
 
 ## Portals
 
@@ -368,6 +408,7 @@ and LinkedIn's (`jobs-noreply@linkedin.com`, `jobalerts-noreply@linkedin.com`).
 | `places` | a town's coordinates (from Nominatim; none if not found) |
 | `imports` | a page sent from the browser: its address, what it showed (until read), status, what came of it or what went wrong |
 | `matches` | an offer kept for a user: the program's score, the wishes it doesn't meet and their points, the user's mark (`new`, `interested`, `applied`, `rejected`), whether they asked for a rating, the model's score and review (JSON), who wrote it and when |
+| `resumes` | a CV made for an offer: its language, status, what's in it and what was left out (JSON), its LaTeX and PDF, who wrote it and when |
 
 ### API
 
@@ -403,6 +444,9 @@ and LinkedIn's (`jobs-noreply@linkedin.com`, `jobalerts-noreply@linkedin.com`).
 | `GET /api/offers/import/<id>` | as `GET /api/offers`, with `import` (status, result), its offers only |
 | `POST /api/offers/<id>/status` | `{status}`: `new`, `interested`, `applied`, `rejected` |
 | `POST /api/offers/<id>/review` | has the offer rated now (not counted in the day's number) |
+| `POST /api/offers/<id>/cv` | `{language}` (`pl`, `en`, `""`: the offer's): has a CV made for the offer |
+| `POST /api/offers/<id>/cv/delete` | deletes it |
+| `GET /api/offers/<id>/cv.pdf`, `cv.tex` | the CV made for the offer, compiled or in LaTeX |
 
 Every `POST` on the profile and on CVs answers with the profile, as
 `GET /api/profile` does; on offers, as `GET /api/offers` does.

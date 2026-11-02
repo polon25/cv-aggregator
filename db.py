@@ -43,6 +43,12 @@
                 the user's wishes it doesn't meet (`unmet`, JSON) and the
                 points they cost (`penalty`, see matching.judge),
                 and the user's mark: new, interested, applied or rejected
+    resumes     a CV made for one of a user's offers (resume.py), in
+                `language` (pl, en; "" until worked out from the offer):
+                status (pending, working, done, failed), the CV as it
+                went in (`content`, JSON), what was left out of it and
+                why (`dropped`, JSON), its LaTeX and PDF, who wrote it;
+                the offer stays kept for the user while it has one
 """
 
 import hashlib
@@ -180,6 +186,22 @@ CREATE TABLE IF NOT EXISTS matches (
     PRIMARY KEY (user_id, offer_id)
 );
 CREATE INDEX IF NOT EXISTS matches_by_review ON matches (user_id, reviewed_at);
+CREATE TABLE IF NOT EXISTS resumes (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    offer_id INTEGER NOT NULL REFERENCES offers(id),
+    language TEXT NOT NULL,              -- pl, en; "": the offer's
+    status TEXT NOT NULL,                -- pending, working, done, failed
+    error TEXT,
+    content TEXT,                        -- JSON, see resume.public
+    dropped TEXT,                        -- JSON: [{text, why}]
+    tex TEXT,
+    pdf BLOB,
+    filename TEXT,
+    model TEXT,                          -- JSON: who wrote it
+    requested_at REAL NOT NULL,
+    made_at REAL,
+    PRIMARY KEY (user_id, offer_id)
+);
 """
 
 ADDED_COLUMNS = (
@@ -254,6 +276,8 @@ def init():
                      "WHERE growth_status = 'working'")
         conn.execute("UPDATE imports SET status = 'pending' WHERE "
                      "status = 'working' AND payload IS NOT NULL")
+        conn.execute("UPDATE resumes SET status = 'pending' WHERE "
+                     "status = 'working'")
         # offers are judged again after a restart, by the program as it
         # is now (no portal is asked again before its time)
         conn.execute("UPDATE profiles SET offers_wanted = 1 WHERE wishes "
@@ -810,7 +834,8 @@ def _match_row(row):
 MATCH_COLUMNS = (
     "m.offer_id, m.created_at, m.prescore, m.status, m.wanted, m.extra, "
     "m.unmet, m.penalty, m.score, (o.details IS NOT NULL AND o.details != "
-    "'') AS has_text, "
+    "'') AS has_text, EXISTS (SELECT 1 FROM resumes r WHERE r.user_id = "
+    "m.user_id AND r.offer_id = m.offer_id) AS has_cv, "
     "m.review, m.review_error, m.model, m.reviewed_at, o.portal, o.url, "
     "o.data, o.first_seen, o.last_seen")
 
@@ -906,11 +931,13 @@ def set_match_status(conn, user_id, offer_id, status):
 
 def forget_offers(conn, before):
     """Offers not seen since `before` that no user marked (as interesting
-    or applied to) go, with their matches."""
+    or applied to) or made a CV for go, with their matches."""
     with conn:
         conn.execute(
             "DELETE FROM matches WHERE status IN ('new', 'rejected') AND "
-            "offer_id IN (SELECT id FROM offers WHERE last_seen < ?)",
+            "offer_id IN (SELECT id FROM offers WHERE last_seen < ?) AND "
+            "NOT EXISTS (SELECT 1 FROM resumes r WHERE r.user_id = "
+            "matches.user_id AND r.offer_id = matches.offer_id)",
             (before,))
         conn.execute(
             "DELETE FROM offers WHERE last_seen < ? AND id NOT IN (SELECT "
@@ -1085,6 +1112,89 @@ def finish_growth(conn, user_id, advice=None, model=None, error=None):
                      "WHERE user_id = ?",
                      (json.dumps(advice, ensure_ascii=False), time.time(),
                       json.dumps(model), user_id))
+
+
+# --- CVs made for offers ---------------------------------------------------
+
+RESUME_COLUMNS = ("offer_id, language, status, error, content, dropped, "
+                  "filename, model, requested_at, made_at")
+
+
+def _resume_row(row):
+    if row:
+        for key in ("content", "dropped", "model"):
+            row[key] = json.loads(row[key]) if row.get(key) else None
+    return row
+
+
+def request_resume(conn, user_id, offer_id, language):
+    """Asks for a CV for the offer (made anew if there is one: the old one
+    stays until then)."""
+    with conn:
+        conn.execute(
+            "INSERT INTO resumes (user_id, offer_id, language, status, "
+            "requested_at) VALUES (?, ?, ?, 'pending', ?) ON CONFLICT "
+            "(user_id, offer_id) DO UPDATE SET language = excluded.language, "
+            "status = 'pending', error = NULL, requested_at = "
+            "excluded.requested_at",
+            (user_id, offer_id, language, time.time()))
+
+
+def claim_resume(conn):
+    """The CV asked for longest ago, marked as being made: {user_id,
+    offer_id, language}; None if none waits."""
+    row = conn.execute("SELECT user_id, offer_id, language FROM resumes "
+                       "WHERE status = 'pending' ORDER BY requested_at "
+                       "LIMIT 1").fetchone()
+    if not row:
+        return None
+    with conn:
+        conn.execute("UPDATE resumes SET status = 'working' WHERE user_id = "
+                     "? AND offer_id = ?", (row["user_id"], row["offer_id"]))
+    return row
+
+
+def finish_resume(conn, user_id, offer_id, made=None, error=None):
+    """made: {language, content, dropped, tex, pdf, filename, model}. If
+    it was asked for again meanwhile, it stays pending."""
+    with conn:
+        if error:
+            conn.execute("UPDATE resumes SET status = 'failed', error = ? "
+                         "WHERE user_id = ? AND offer_id = ? AND status = "
+                         "'working'", (error, user_id, offer_id))
+            return
+        conn.execute(
+            "UPDATE resumes SET status = CASE status WHEN 'working' THEN "
+            "'done' ELSE status END, error = NULL, language = CASE status "
+            "WHEN 'working' THEN ? ELSE language END, content = ?, "
+            "dropped = ?, tex = ?, pdf = ?, filename = ?, model = ?, "
+            "made_at = ? WHERE user_id = ? AND offer_id = ?",
+            (made["language"], json.dumps(made["content"],
+                                          ensure_ascii=False),
+             json.dumps(made["dropped"], ensure_ascii=False), made["tex"],
+             made["pdf"], made["filename"], json.dumps(made["model"]),
+             time.time(), user_id, offer_id))
+
+
+def user_resumes(conn, user_id):
+    """{offer id: the user's CV for it, without its files}."""
+    return {r["offer_id"]: _resume_row(r) for r in conn.execute(
+        "SELECT %s FROM resumes WHERE user_id = ?" % RESUME_COLUMNS,
+        (user_id,))}
+
+
+def resume_file(conn, user_id, offer_id, kind):
+    """(the CV's PDF or LaTeX ("pdf", "tex"), its file name), or None."""
+    row = conn.execute("SELECT %s AS data, filename FROM resumes WHERE "
+                       "user_id = ? AND offer_id = ? AND %s IS NOT NULL"
+                       % (kind, kind), (user_id, offer_id)).fetchone()
+    return row and (row["data"], "%s.%s" % (row["filename"], kind))
+
+
+def delete_resume(conn, user_id, offer_id):
+    with conn:
+        conn.execute("DELETE FROM resumes WHERE user_id = ? AND offer_id = ? "
+                     "AND status != 'working'", (user_id, offer_id))
 
 
 # --- the mailbox job alerts come to ----------------------------------------

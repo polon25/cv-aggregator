@@ -3,7 +3,8 @@ into a structured extraction (candidate.py merges those and does the
 rest), analyze() describes a candidate from their whole profile,
 review_offer() rates a job offer for a candidate (matching.py chooses
 which), read_cards() and read_page() read offers from pages users send
-from their browser (importer.py).
+from their browser (importer.py), tailor_cv() plans a CV for an offer and
+check_cv() checks what it wrote against the profile (resume.py).
 
 Both ask for a JSON answer (llm.ask_json) and check it before it's kept.
 Prompts are in Polish: so is what the models write.
@@ -17,6 +18,7 @@ import documents
 import llm
 import matching
 import portals
+import resume
 
 log = logging.getLogger("agents")
 
@@ -456,3 +458,155 @@ def advise(profile_text, demand, cons, account):
     advice, _, model = llm.ask_json(messages, "advise", _validate_advice,
                                     account)
     return advice, model
+
+
+TAILOR = """Jesteś doświadczonym rekruterem, który pomaga kandydatowi \
+przygotować CV pod konkretną ofertę pracy. Dostajesz profil kandydata \
+(jego wpisy mają oznaczenia w nawiasach, np. [E1]), policzone przez program \
+fakty i ofertę. Zaplanuj CV w języku: %s.
+
+Najważniejsza zasada: CV nie może kłamać. Pisz wyłącznie to, co wynika \
+z profilu. Wolno ci wybierać, skracać, porządkować, łączyć i tłumaczyć \
+to, co jest w profilu, oraz nazywać to słowami oferty, jeśli znaczą \
+dokładnie to samo. Nie wolno dodawać technologii, narzędzi, zadań, \
+obowiązków, osiągnięć, liczb, nazw firm ani stopni, których w profilu nie \
+ma, ani przedstawiać ich jako większych, niż są (np. „współtworzenie” jako \
+„kierowanie”, „podstawowa znajomość” jako „biegła”, „C++” jako „C++17”). \
+Wymagań oferty, których kandydat nie spełnia, po prostu nie wymieniaj. \
+Program i drugi model sprawdzą każde zdanie, a wymyślone usuną.
+
+Odpowiedz wyłącznie obiektem JSON:
+{"headline": "nagłówek pod nazwiskiem, do 60 znaków: stanowisko lub \
+specjalizacja kandydata z profilu, pasujące do oferty",
+ "summary": "2–4 zdania podsumowania: kim jest kandydat i co z jego \
+doświadczenia najbardziej odpowiada tej ofercie",
+ "experience": [{"ref": "E1", "title": "stanowisko", "organization": \
+"pracodawca", "location": "miejsce", "points": ["zadanie lub osiągnięcie \
+z tego wpisu"], "skills": ["technologie wymienione przy tym wpisie"]}],
+ "education": [{"ref": "D1", "institution": "uczelnia", "degree": "stopień", \
+"field": "kierunek i specjalność", "thesis": "temat pracy"}],
+ "skills": [{"category": "nazwa grupy", "level": "poziom, jeśli profil go \
+podaje dla każdej umiejętności tej grupy", "names": ["umiejętności \
+dokładnie tak nazwane jak w profilu"]}],
+ "certificates": [{"ref": "C1", "name": "nazwa", "issuer": "wystawca"}],
+ "projects": [{"ref": "P1", "name": "nazwa", "role": "rola", \
+"description": "1 zdanie", "skills": ["technologie z tego wpisu"]}],
+ "publications": [{"ref": "U1"}],
+ "awards": [{"ref": "A1", "name": "nazwa", "issuer": "przyznający"}],
+ "languages": [{"ref": "L1", "name": "język", "level": "poziom"}],
+ "interests": [{"ref": "I1", "name": "zainteresowanie"}]}
+
+Zasady:
+- Pola tekstowe pisz w języku CV: przetłumacz to, co w profilu jest \
+w innym języku (nazwy uczelni po angielsku ich oficjalną angielską nazwą, \
+np. „Politechnika Warszawska” → „Warsaw University of Technology”). Nazw \
+firm, technologii, certyfikatów i tytułów prac nie tłumacz. Pole, które ma \
+zostać jak w profilu, możesz pominąć.
+- "experience": każde stanowisko z profilu (CV nie może mieć luk). Przy \
+stanowiskach, które mają coś wspólnego z ofertą, 2–4 punkty, \
+najważniejsze dla oferty najpierw; przy pozostałych 0–1. Punkty biorą się \
+tylko z opisu i zadań tego stanowiska. "skills": tylko technologie \
+wymienione przy tym stanowisku, najpierw te z oferty.
+- "education": każda pozycja z profilu.
+- "skills": umiejętności z profilu przydatne w tej pracy (te z oferty \
+najpierw), w 2–6 grupach, każda umiejętność raz. Umiejętności zupełnie \
+niezwiązane z ofertą możesz pominąć.
+- "certificates", "projects", "publications", "awards": tylko te, które \
+coś mówią w kontekście oferty (mogą być puste). "languages": wszystkie. \
+"interests": najwyżej 4.
+- "headline": bez tytułów naukowych (program dopisuje je przy nazwisku) \
+i bez nazwy firmy z oferty.
+- Po polsku pisz formami bezosobowymi, jak w CV: rzeczownikami („Rozwój \
+systemu…”, „Przygotowywanie narzędzi…”, „Doświadczenie w…”), nie \
+czasownikami w rodzaju męskim ani żeńskim („rozwijał”, „rozwijała”).
+- "summary": bez zaimków („I”, „ja”), w stylu CV. Staż bierz tylko \
+z faktów policzonych przez program i nie przypisuj go jednej roli ani \
+dziedzinie, bo obejmuje wszystkie stanowiska (np. „8 years of professional \
+experience, 2 of them in software engineering” tylko wtedy, gdy daty \
+stanowisk to pokazują); lata zaokrąglaj w dół.
+- "level" umiejętności jak w CV kandydata, np. „Dobra znajomość”, \
+„Podstawowa znajomość” / „Good knowledge”, „Basic knowledge”; \
+"degree" w zwykłej dla języka CV formie, np. „Ph.D.”, „M.Sc. Eng.”, \
+„B.Sc. Eng.” / „doktor”, „magister inżynier”, „inżynier”.
+- Krótko i rzeczowo, bez przymiotników typu „pasjonat”, „ekspert”, \
+których profil nie uzasadnia."""
+
+CHECK = """Jesteś skrupulatnym weryfikatorem CV. Dostajesz profil kandydata \
+(z oznaczeniami wpisów, np. [E1]) i ponumerowane stwierdzenia, które ktoś \
+napisał do jego CV pod konkretną ofertę. Sprawdź każde stwierdzenie: czy \
+wynika z profilu. Tłumaczenie, skrócenie, inne sformułowanie tego samego \
+albo zsumowanie faktów z profilu jest w porządku. Niepoparte jest \
+stwierdzenie, które dodaje coś, czego w profilu nie ma (technologię, \
+narzędzie, zadanie, osiągnięcie, liczbę, zakres odpowiedzialności, \
+stanowisko, stopień, poziom znajomości), albo przedstawia fakt jako \
+większy lub inny, niż jest. Punkt przypisany do wpisu (np. [E1]) musi \
+wynikać z tego wpisu. Pole z „w profilu: …” musi znaczyć to samo, co \
+oryginał. Uważaj na staż: łączny staż z faktów obejmuje wszystkie \
+stanowiska, więc zdanie przypisujące go jednej roli lub dziedzinie (np. \
+„programista z 8-letnim doświadczeniem”, gdy programistą jest od 2 lat) \
+jest niepoparte.
+
+Odpowiedz wyłącznie obiektem JSON:
+{"unsupported": [{"n": numer stwierdzenia, "why": "krótko po polsku: czego \
+profil nie potwierdza", "fix": "to samo stwierdzenie poprawione tak, by \
+profil je potwierdzał (w tym samym języku), albo \"\", gdy nic z niego nie \
+zostaje"}]}
+Gdy wszystkie są poparte, zwróć pustą listę. W "fix" pola z „w profilu: …” \
+podaj wierne tłumaczenie oryginału."""
+
+
+def tailor_cv(sources, facts_text, offer, text, language, account):
+    """(the plan of a CV for an offer, as resume.read_plan() makes it, who
+    answered), from the profile's text with refs (resume.sources())."""
+    refs = sources[1]
+    messages = [
+        {"role": "system", "content": TAILOR % (
+            "polskim" if language == "pl" else "angielskim")},
+        {"role": "user", "content": "<profil>\n%s\n</profil>\n\nFakty "
+         "policzone przez program:\n%s\n\n<oferta>\n%s\n</oferta>" % (
+             sources[0], facts_text, _offer_text(offer, text))},
+    ]
+    plan, _, model = llm.ask_json(messages, "tailor cv",
+                                  lambda a: resume.read_plan(a, refs),
+                                  account)
+    return plan, model
+
+
+def check_cv(sources_text, facts_text, found, account):
+    """({index: {why, fix}} of the statements (resume.statements()) the
+    profile doesn't back, with each written anew so that it does ("" if
+    nothing of it can stay), who answered)."""
+    lines = []
+    for n, s in enumerate(found, 1):
+        where = "[%s] " % s["ref"] if s.get("ref") else ""
+        if "original" in s:
+            where += "(w profilu: „%s”%s) " % (
+                s["original"], ", dotyczy: " + s["about"]
+                if s.get("about") else "")
+        lines.append("%d. %s%s" % (n, where, s["text"]))
+
+    def validate(answer):
+        if not isinstance(answer.get("unsupported"), list):
+            raise ValueError("no list of unsupported statements")
+        unsupported = {}
+        for entry in answer["unsupported"]:
+            try:
+                n = int(entry.get("n"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if 1 <= n <= len(found):
+                unsupported[n - 1] = {
+                    "why": candidate.clean_text(entry.get("why"), 300) or
+                    "profil tego nie potwierdza",
+                    "fix": candidate.clean_text(entry.get("fix"), 400)}
+        return unsupported
+
+    messages = [
+        {"role": "system", "content": CHECK},
+        {"role": "user", "content": "<profil>\n%s\n\nFakty policzone przez "
+         "program:\n%s\n</profil>\n\n<stwierdzenia>\n%s\n</stwierdzenia>" % (
+             sources_text, facts_text, "\n".join(lines))},
+    ]
+    unsupported, _, model = llm.ask_json(messages, "check cv", validate,
+                                         account)
+    return unsupported, model

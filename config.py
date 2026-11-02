@@ -90,8 +90,11 @@ MAX_CVS = int(os.getenv("MAX_CVS") or "6")
 MAX_CV_MB = float(os.getenv("MAX_CV_MB") or "5")
 # A CV's text is cut to this many characters before a model reads it.
 MAX_CV_CHARS = int(os.getenv("MAX_CV_CHARS") or "40000")
-# Background threads reading CVs and writing analyses.
+# Background threads reading CVs, writing analyses and making CVs for
+# offers.
 WORKERS = int(os.getenv("WORKERS") or "2")
+# The LaTeX compiler CVs for offers are made with (resume.py).
+PDFLATEX = os.getenv("PDFLATEX") or "pdflatex"
 
 # --- job offers -------------------------------------------------------------
 
