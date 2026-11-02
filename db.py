@@ -876,9 +876,12 @@ def reviews_since(conn, user_id, since):
         "reviewed_at >= ? AND extra = 0", (user_id, since)).fetchone()["n"]
 
 
+# Offers past their validity aren't worth a rating: they're about to go.
+NOT_EXPIRED = ("(o.expires IS NULL OR o.expires >= CAST(strftime('%s', "
+               "'now') AS REAL))")
 TO_RATE = ("m.wanted = 0 AND (m.reviewed_at IS NULL OR m.reviewed_at < ?) "
            "AND m.review_error IS NULL AND m.status = 'new' AND "
-           "o.last_seen >= ?")
+           "o.last_seen >= ? AND " + NOT_EXPIRED)
 
 
 def wanted_reviews(conn, user_id):
@@ -1091,9 +1094,11 @@ def keep_matches(conn, user_id, scored):
 
 def want_reviews(conn, user_id, offer_ids, rated_before=None):
     """Asks for the offers to be rated (not counting in the day's number):
-    all of them, or, with `rated_before`, those not rated since then."""
+    all of them, or, with `rated_before`, those not rated since then; not
+    the expired ones."""
     sql = "UPDATE matches SET wanted = 1, review_error = NULL WHERE " \
-        "user_id = ? AND offer_id = ?"
+        "user_id = ? AND offer_id = ? AND offer_id IN (SELECT o.id FROM " \
+        "offers o WHERE " + NOT_EXPIRED + ")"
     if rated_before is not None:
         sql += " AND (reviewed_at IS NULL OR reviewed_at < ?)"
     extra = () if rated_before is None else (rated_before,)

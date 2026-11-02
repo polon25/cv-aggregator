@@ -205,9 +205,13 @@ warning in its last three days): JustJoin.it and RocketJobs say so in
 their lists, No Fluff Jobs, Bulldogjob and pracuj.pl (pages sent from the
 browser) on an offer's page (JSON-LD `validThrough`, No Fluff Jobs'
 `expiresAt`), read when its text is fetched for rating; an offer whose
-page is gone (HTTP 404 or 410) expires then. Once that's past, the offer
-goes from the app with its ratings and CVs, unless the user applied for
-it ("Aplikowane" keeps it, marked as expired). Offers whose portal says
+page is gone (HTTP 404 or 410) expires then, and so does one whose page,
+sent from the browser, says it's closed (LinkedIn's "No longer accepting
+applications", which the model reading the page notes: LinkedIn's pages
+give no date, and the app never fetches them itself). Expired offers
+aren't rated any more; once the date is past, the offer goes from the app
+with its ratings and CVs, unless the user applied for it ("Aplikowane"
+keeps it, marked as expired). Offers whose portal says
 nothing go as before, two `OFFER_DAYS` after they were last seen.
 
 ## What to learn

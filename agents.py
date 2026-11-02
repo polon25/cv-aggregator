@@ -312,7 +312,9 @@ Odpowiedz wyłącznie obiektem JSON, bez wcięć:
 READ_PAGE = """Dostajesz tekst strony z jedną ofertą pracy (stronę portalu \
 z ofertami; może zawierać też menu, inne oferty i stopkę). Przepisz dane tej \
 oferty%s. Odpowiedz wyłącznie obiektem JSON, bez wcięć:
-{%s%s}
+{%s%s, "closed": true, gdy strona mówi, że ta oferta jest już zamknięta: \
+nie przyjmuje aplikacji albo wygasła (np. „Nie przyjmujemy już aplikacji”, \
+„No longer accepting applications”, „Oferta wygasła”), inaczej false}
 
 %s"""
 
@@ -371,9 +373,10 @@ def read_cards(cards, account):
 
 def read_page(text, title, posting, selected, account):
     """One offer from its page's text (and its JSON-LD JobPosting, if it
-    has one, which then gives its text): (offer with "text", who
-    answered). `selected`: the id of the offer shown beside a list (on
-    LinkedIn's search), to read that one."""
+    has one, which then gives its text): (offer with "text" and "closed":
+    whether the page says it takes no more applications, who answered).
+    `selected`: the id of the offer shown beside a list (on LinkedIn's
+    search), to read that one."""
     which = " (tej, która jest otwarta obok listy, o id %s)" % selected \
         if selected else ""
     need_text = not (posting and posting.get("description"))
@@ -394,6 +397,7 @@ def read_page(text, title, posting, selected, account):
         offer["text"] = portals.text_of(posting["description"]) \
             if not need_text else candidate.clean_text(
                 answer.get("description"), 20000, True)
+        offer["closed"] = answer.get("closed") is True
         return offer
 
     messages = [{"role": "system", "content": READ_PAGE % (

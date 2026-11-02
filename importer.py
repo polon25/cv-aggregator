@@ -28,6 +28,7 @@ day's ratings, like those of the portals the app searches.
 
 import logging
 import re
+import time
 
 import agents
 import db
@@ -109,8 +110,14 @@ def process(conn, item):
             posting = (page["ld"] or [None])[0]
             offer, _ = agents.read_page(page["text"], page["title"],
                                         posting, selected, account)
+            # a page saying the offer is closed (LinkedIn's "No longer
+            # accepting applications") ends it now
+            closed = offer.pop("closed")
             offer.update(portal=portal, key=single, url=address,
-                         expires=(posting or {}).get("validThrough"))
+                         expires=time.time() if closed else
+                         (posting or {}).get("validThrough"))
+            if closed:
+                log.info("Import %d: the offer is closed", item["id"])
             found.append(portals.tidy(offer))
     except llm.LLMError as e:
         log.warning("Import %d not read: %s", item["id"], e)
