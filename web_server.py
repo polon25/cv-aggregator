@@ -229,10 +229,10 @@ MATCH_STATUSES = ("new", "interested", "applied", "rejected")
 MORE_REVIEWS = 10
 MATCH_FIELDS = ("offer_id", "portal", "url", "title", "company", "cities",
                 "mode", "salary_min", "salary_max", "currency", "contracts",
-                "level", "skills", "nice", "posted", "first_seen",
-                "last_seen", "prescore", "status", "wanted", "unmet",
-                "penalty",
-                "review", "review_error", "reviewed_at", "created_at")
+                "level", "skills", "nice", "posted", "expires",
+                "first_seen", "last_seen", "prescore", "status", "wanted",
+                "unmet", "penalty", "review", "review_error", "reviewed_at",
+                "created_at")
 
 
 def _offers_json(conn, user):

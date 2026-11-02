@@ -200,6 +200,16 @@ teraz", or saving "Czego szukam"):
    ("Pokaż słabiej dopasowane oferty"). The candidate's profile is the system prompt, the
    same for all their offers, so models that cache read it for a tenth.
 
+An offer shows until when it's valid, when its portal says (with a
+warning in its last three days): JustJoin.it and RocketJobs say so in
+their lists, No Fluff Jobs, Bulldogjob and pracuj.pl (pages sent from the
+browser) on an offer's page (JSON-LD `validThrough`, No Fluff Jobs'
+`expiresAt`), read when its text is fetched for rating; an offer whose
+page is gone (HTTP 404 or 410) expires then. Once that's past, the offer
+goes from the app with its ratings and CVs, unless the user applied for
+it ("Aplikowane" keeps it, marked as expired). Offers whose portal says
+nothing go as before, two `OFFER_DAYS` after they were last seen.
+
 ## What to learn
 
 The profile page's "Kierunki rozwoju" ([market.py](market.py), no model):
@@ -318,8 +328,8 @@ code (see [portals.py](portals.py) for every option):
   kept if they have every word of the term).
 - `fields`: for each of an offer's fields (`key`, `url`, `title`,
   `company`, `cities`, `mode`, `salary_min`, `salary_max`, `period`,
-  `currency`, `contracts`, `level`, `skills`, `nice`, `posted`, `points`,
-  `text`), a path in an item (`a.b`, `a[].b` for each of a list), or
+  `currency`, `contracts`, `level`, `skills`, `nice`, `posted`,
+  `expires`, `points`, `text`), a path in an item (`a.b`, `a[].b` for each of a list), or
   `{"path"}`, `{"template": "…{path}…"}`, `{"value": …}` or `{"pairs":
   [lat path, lon path]}`, with `"split"` (a separator) and `"map"`
   ({portal's value: ours}; values not in it are dropped) if needed. Ours
@@ -327,9 +337,10 @@ code (see [portals.py](portals.py) for every option):
   `intern`/`junior`/`mid`/`senior`/`lead`, a `period` of
   `hour`/`day`/`month`/`year` (pay is made a month's).
 - `details` (optional): where an offer's text is (an address template;
-  `{key|base64}`, `{…|url}` encode) and the paths to it; without it the
-  offer's page is read for JSON-LD `JobPosting` – or the list's `text` is
-  used, if it has it.
+  `{key|base64}`, `{…|url}` encode), the paths to it, and `expires`: the
+  path to the end of its validity, if the details have one; without it
+  the offer's page is read for JSON-LD `JobPosting` (and its
+  `validThrough`) – or the list's `text` is used, if it has it.
 
 A file that can't be read, or has neither `parser` nor `search`, is left
 out with an error in the log.
@@ -403,7 +414,7 @@ and LinkedIn's (`jobs-noreply@linkedin.com`, `jobalerts-noreply@linkedin.com`).
 | `logins` | login sessions (a 30-day cookie, stored as its SHA-256) |
 | `cvs` | a CV: file name, kind, size, SHA-256 (the same file can't be uploaded twice), its text and language, what the model read from it (JSON), status (`pending`, `working`, `done`, `failed`) and error, which model read it |
 | `profiles` | the user's own description, what they look for (`wishes`, JSON, and `goals`, their words), their changes to the profile (JSON), the analysis (JSON) with its status, model, time and the fingerprint of the profile it was written from, when their offers were last looked for and whether they asked for it |
-| `offers` | offers found, shared by all users: portal, its id, URL, what the list said (JSON), first and last seen, the full text once fetched |
+| `offers` | offers found, shared by all users: portal, its id, URL, what the list said (JSON), first and last seen, the full text once fetched, until when it's valid (if the portal says) |
 | `searches` | when a portal was last searched for a term, how many offers it gave or what went wrong |
 | `places` | a town's coordinates (from Nominatim; none if not found) |
 | `imports` | a page sent from the browser: its address, what it showed (until read), status, what came of it or what went wrong |

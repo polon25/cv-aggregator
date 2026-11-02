@@ -1,6 +1,6 @@
 """Job portals: search(portal, term) reads one portal's list of offers for a
-search term, details(offer) the full text of one offer. Standard library
-only.
+search term, details(offer) the full text of one offer and until when it's
+valid. Standard library only.
 
 Every portal is a JSON file in portals/ (and in config.PORTALS_DIR, which
 may add portals or replace shipped ones by their id):
@@ -36,8 +36,10 @@ A described portal:
                it are dropped)}}; offer fields as below, plus "period"
                (salary per hour, day, month or year) and "text" (the
                offer's full text, when the list has it)
-    "details": {"url" (a template), "headers", "format", "text": [paths]};
-               without it, an offer's page is read for JSON-LD JobPosting
+    "details": {"url" (a template), "headers", "format", "text": [paths],
+               "expires": a path}; without it, an offer's page is read
+               for JSON-LD JobPosting (its validThrough), or an
+               "expiresAt" or "validThrough" in the page's data
 
 Templates take {path} of the item (or {term}), and |base64 or |url after
 the path encodes it.
@@ -53,9 +55,10 @@ An offer, as every portal's is made to look (tidy()):
     (remote, hybrid, office or ""), salary_min, salary_max, currency (a
     month's pay; None when not given), contracts (uop, b2b, other), level
     (intern, junior, mid, senior, lead or ""), skills, nice (skills nice
-    to have), posted (epoch seconds or None), points (the [lat, lon] of
-    its places, when the portal gives them), text (its full text, when
-    the list gives it)}
+    to have), posted (epoch seconds or None), expires (when it stops
+    being valid, epoch seconds, or None when the portal doesn't say),
+    points (the [lat, lon] of its places, when the portal gives them),
+    text (its full text, when the list gives it)}
 """
 
 import base64
@@ -97,6 +100,11 @@ _cache_lock = threading.Lock()
 
 class PortalError(Exception):
     """A page that couldn't be had or read."""
+
+
+class Gone(PortalError):
+    """A page that isn't there any more (HTTP 404 or 410): an offer taken
+    down."""
 
 
 # --- the portals there are -------------------------------------------------
@@ -209,6 +217,8 @@ def get(url, headers=None, delay=None, cache=False):
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             body = response.read(MAX_PAGE)
     except urllib.error.HTTPError as e:
+        if e.code in (404, 410):
+            raise Gone("HTTP %d: %s" % (e.code, url))
         raise PortalError("HTTP %d: %s" % (e.code, url))
     except (urllib.error.URLError, OSError) as e:
         raise PortalError("%s: %s" % (url, e))
@@ -316,6 +326,16 @@ def epoch(value):
         .replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
+def until(value):
+    """The end of an offer's validity as epoch seconds (see epoch()); a
+    day alone ("2026-12-02") is valid to its end."""
+    when = epoch(value)
+    if when is not None and re.fullmatch(r"\d{4}-\d\d-\d\d",
+                                         str(value).strip()):
+        when += 86399
+    return when
+
+
 def monthly(amount, unit):
     """A pay given by the hour, day, month or year, as a month's."""
     try:
@@ -348,6 +368,7 @@ def tidy(offer):
         out[key] = list(dict.fromkeys(str(s) for s in offer.get(key) or []
                                       if s))
     out["posted"] = offer.get("posted")
+    out["expires"] = until(offer.get("expires"))
     out["points"] = [list(p) for p in dict.fromkeys(
         tuple(p) for p in offer.get("points") or [])]
     if offer.get("text"):
@@ -467,10 +488,12 @@ def _details_described(portal, offer):
                portal.get("delay"))
     data = parse(page, spec.get("format", "json"))
     if data is None:
-        return ""
-    return "\n".join(text_of(str(v)) if "<" in str(v) else str(v)
+        return "", None
+    text = "\n".join(text_of(str(v)) if "<" in str(v) else str(v)
                      for path in spec.get("text") or []
                      for v in values(data, path))
+    found = values(data, spec["expires"]) if spec.get("expires") else []
+    return text, until(found[0]) if found else None
 
 
 # --- searching ------------------------------------------------------------
@@ -492,14 +515,15 @@ def search(portal_id, term):
 
 
 def details(offer):
-    """The offer's full text, from the portal."""
+    """(the offer's full text, until when it's valid or None), from the
+    portal; raises Gone when its page is gone."""
     portal = PORTALS.get(offer["portal"]) or {}
     try:
         if portal.get("details"):
-            text = _details_described(portal, offer)
+            text, expires = _details_described(portal, offer)
         else:
             page = get(offer["url"], delay=portal.get("delay"))
-            text = jobposting_text(page)
+            text, expires = jobposting_text(page), page_expiry(page)
             if portal.get("parser"):
                 import sites
                 text = "\n".join(filter(None, [text, sites.details(
@@ -511,7 +535,20 @@ def details(offer):
     text = text.strip()
     if not text:
         raise PortalError("no text on %s" % offer["url"])
-    return text[:config.OFFER_MAX_CHARS]
+    return text[:config.OFFER_MAX_CHARS], expires
+
+
+def page_expiry(page):
+    """Until when the offer on a page is valid: its JSON-LD JobPosting's
+    validThrough, or else an "expiresAt" or "validThrough" in the page's
+    data (No Fluff Jobs', Arbeitnow's); None when it doesn't say."""
+    posting = json_ld(page, "JobPosting") or {}
+    found = until(posting.get("validThrough"))
+    if found is None:
+        m = re.search(r'"(?:expiresAt|validThrough)"\s*:\s*"(\d{4}-\d\d-\d\d'
+                      r'[^"]*)"', page)
+        found = until(m.group(1)) if m else None
+    return found
 
 
 def jobposting_text(page):

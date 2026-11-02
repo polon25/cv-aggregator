@@ -21,6 +21,20 @@ const CONTRACT_NAMES = { uop: "UoP", b2b: "B2B", other: "inna" };
 
 const money = (n) => Math.round(n).toLocaleString("pl-PL");
 
+// Until when an offer is valid, as the portal says: a warning in its last
+// days; only offers applied for stay once it's past (the server removes the
+// rest).
+function validity(m) {
+  if (!m.expires) return null;
+  const date = fmtTime(m.expires).slice(0, 10);
+  const left = m.expires - Date.now() / 1000;
+  if (left < 0) return el("span", { class: "warn-text", title: "Oferta wygasła na portalu" }, "wygasła " + date);
+  const days = Math.floor(left / 86400);
+  if (days >= 3) return "ważna do " + date;
+  return el("span", { class: "warn-text" }, "ważna do " + date + " – zostało " +
+    (days < 1 ? "mniej niż dobę" : days === 1 ? "1 dzień" : days + " dni"));
+}
+
 function scoreClass(score) {
   return score === null ? "none" : score >= 75 ? "high" : score >= 50 ? "mid" : "low";
 }
@@ -344,6 +358,7 @@ class OffersView {
           el("a", { class: "offer-title", href: m.url, target: "_blank", rel: "noopener" }, m.title),
           el("div", { class: "offer-company" }, m.company),
           el("div", { class: "muted small" }, meta.join(" · "),
+            m.expires && [" · ", validity(m)],
             m.last_seen < this.data.fresh && el("span", { class: "warn-text" }, " · może być już nieaktualna")))),
       m.skills.length > 0 && el("div", { class: "tags small" }, m.skills.map((s) =>
         el("span", { class: "tag-chip" + (have.has(s) ? " have" : ""), title: have.has(s) ? "Masz tę umiejętność" : null }, s))),

@@ -101,6 +101,9 @@ def _once():
             pass
         now = time.time()
         db.forget_offers(conn, now - 2 * config.OFFER_DAYS * 86400)
+        gone = db.forget_expired(conn, now)
+        if gone:
+            log.info("%d expired offers removed", gone)
         for user_id in db.users_due(conn,
                                     now - config.OFFERS_INTERVAL * 3600):
             try:
@@ -333,16 +336,21 @@ def day_start(row):
 
 
 def offer_text(conn, offer):
-    """The offer's full text: kept, or fetched from its portal (and kept);
-    "" or None when there's none."""
+    """The offer's full text: kept, or fetched from its portal (and kept,
+    with until when it's valid, if the page says; a page that's gone
+    makes it expired now); "" or None when there's none."""
     text = db.offer_details(conn, offer["offer_id"])
     if text is None and portals.searchable(offer["portal"]):
+        expires = None
         try:
-            text = portals.details(offer)
+            text, expires = portals.details(offer)
+        except portals.Gone as e:
+            log.info("Offer %d is gone: %s", offer["offer_id"], e)
+            text, expires = "", time.time()
         except portals.PortalError as e:
             log.info("No text for offer %d: %s", offer["offer_id"], e)
             text = ""
-        db.save_offer_details(conn, offer["offer_id"], text)
+        db.save_offer_details(conn, offer["offer_id"], text, expires)
     return text
 
 

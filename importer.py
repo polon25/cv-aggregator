@@ -106,10 +106,11 @@ def process(conn, item):
                 found.append(portals.tidy(offer))
         if single:
             selected = single if tiles else None
+            posting = (page["ld"] or [None])[0]
             offer, _ = agents.read_page(page["text"], page["title"],
-                                        (page["ld"] or [None])[0], selected,
-                                        account)
-            offer.update(portal=portal, key=single, url=address)
+                                        posting, selected, account)
+            offer.update(portal=portal, key=single, url=address,
+                         expires=(posting or {}).get("validThrough"))
             found.append(portals.tidy(offer))
     except llm.LLMError as e:
         log.warning("Import %d not read: %s", item["id"], e)

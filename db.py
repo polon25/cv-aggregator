@@ -24,8 +24,12 @@
                 ratings starts anew)
     offers      job offers found on the portals (see portals.py), shared
                 by all users: what the portal's list says (JSON), when it
-                was first and last seen there, and its full text once it
-                was needed
+                was first and last seen there, its full text once it
+                was needed, and until when it's valid, if the portal says
+                (from its list, its page or a page sent from the browser;
+                an offer whose page is gone expires then): once that's
+                past, it goes, with its matches and CVs, but the ones
+                users applied for
     searches    when a portal was last searched for a term, with what came
                 of it
     places      where a place is (see geo.py), NULL when it wasn't found
@@ -157,6 +161,7 @@ CREATE TABLE IF NOT EXISTS offers (
     last_seen REAL NOT NULL,
     details TEXT,                        -- the full text, once fetched
     details_at REAL,
+    expires REAL,                        -- valid until; NULL: not known
     UNIQUE (portal, key)
 );
 CREATE INDEX IF NOT EXISTS offers_by_time ON offers (last_seen);
@@ -220,6 +225,7 @@ ADDED_COLUMNS = (
     ("imports", "mail_validity", "TEXT"),
     ("imports", "mail_trashed", "INTEGER NOT NULL DEFAULT 0"),
     ("matches", "penalty", "INTEGER NOT NULL DEFAULT 0"),
+    ("offers", "expires", "REAL"),
 )
 
 USERNAME_RE = re.compile(r"[\w.\-]{3,32}")
@@ -760,23 +766,26 @@ def record_search(conn, portal, term, found=None, error=None):
 
 def save_offers(conn, offers):
     """Keeps offers a portal listed (new ones added, known ones updated,
-    their text kept, or set when the list gives it)."""
+    their text kept, or set when the list gives it; so is until when
+    they're valid)."""
     now = time.time()
     with conn:
         for o in offers:
-            data = json.dumps({k: v for k, v in o.items()
-                               if k not in ("portal", "key", "url", "text")},
-                              ensure_ascii=False)
+            data = json.dumps({k: v for k, v in o.items() if k not in (
+                "portal", "key", "url", "text", "expires")},
+                ensure_ascii=False)
             conn.execute(
                 "INSERT INTO offers (portal, key, url, data, first_seen, "
-                "last_seen, details, details_at) VALUES (?, ?, ?, ?, ?, ?, "
-                "?, ?) ON CONFLICT (portal, key) DO UPDATE SET url = "
-                "excluded.url, data = excluded.data, last_seen = "
+                "last_seen, details, details_at, expires) VALUES (?, ?, ?, "
+                "?, ?, ?, ?, ?, ?) ON CONFLICT (portal, key) DO UPDATE SET "
+                "url = excluded.url, data = excluded.data, last_seen = "
                 "excluded.last_seen, details = COALESCE(excluded.details, "
                 "offers.details), details_at = COALESCE(excluded.details_at, "
-                "offers.details_at)",
+                "offers.details_at), expires = COALESCE(excluded.expires, "
+                "offers.expires)",
                 (o["portal"], str(o["key"]), o["url"], data, now, now,
-                 o.get("text"), now if o.get("text") else None))
+                 o.get("text"), now if o.get("text") else None,
+                 o.get("expires")))
 
 
 def _offer_row(row):
@@ -787,10 +796,11 @@ def _offer_row(row):
 
 
 def recent_offers(conn, since):
-    """Offers seen on their portals since `since`."""
+    """Offers seen on their portals since `since` and not expired."""
     return [_offer_row(r) for r in conn.execute(
-        "SELECT id, portal, key, url, data, first_seen, last_seen FROM "
-        "offers WHERE last_seen >= ?", (since,))]
+        "SELECT id, portal, key, url, data, first_seen, last_seen, expires "
+        "FROM offers WHERE last_seen >= ? AND (expires IS NULL OR expires "
+        ">= ?)", (since, time.time()))]
 
 
 def offer_details(conn, offer_id):
@@ -799,10 +809,13 @@ def offer_details(conn, offer_id):
     return row and row["details"]
 
 
-def save_offer_details(conn, offer_id, text):
+def save_offer_details(conn, offer_id, text, expires=None):
+    """The offer's full text, and until when it's valid (if its page
+    says)."""
     with conn:
-        conn.execute("UPDATE offers SET details = ?, details_at = ? WHERE "
-                     "id = ?", (text, time.time(), offer_id))
+        conn.execute("UPDATE offers SET details = ?, details_at = ?, "
+                     "expires = COALESCE(?, expires) WHERE id = ?",
+                     (text, time.time(), expires, offer_id))
 
 
 def matched_ids(conn, user_id):
@@ -837,7 +850,7 @@ MATCH_COLUMNS = (
     "'') AS has_text, EXISTS (SELECT 1 FROM resumes r WHERE r.user_id = "
     "m.user_id AND r.offer_id = m.offer_id) AS has_cv, "
     "m.review, m.review_error, m.model, m.reviewed_at, o.portal, o.url, "
-    "o.data, o.first_seen, o.last_seen")
+    "o.data, o.first_seen, o.last_seen, o.expires")
 
 
 def user_matches(conn, user_id):
@@ -942,6 +955,23 @@ def forget_offers(conn, before):
         conn.execute(
             "DELETE FROM offers WHERE last_seen < ? AND id NOT IN (SELECT "
             "offer_id FROM matches)", (before,))
+
+
+def forget_expired(conn, now):
+    """Offers valid until before `now` go, with their matches and the CVs
+    made for them, but the matches users applied for (and their CVs),
+    which keep the offer; returns how many matches went."""
+    with conn:
+        gone = conn.execute(
+            "DELETE FROM matches WHERE status != 'applied' AND offer_id IN "
+            "(SELECT id FROM offers WHERE expires < ?)", (now,)).rowcount
+        conn.execute(
+            "DELETE FROM resumes WHERE NOT EXISTS (SELECT 1 FROM matches m "
+            "WHERE m.user_id = resumes.user_id AND m.offer_id = "
+            "resumes.offer_id)")
+        conn.execute("DELETE FROM offers WHERE expires < ? AND id NOT IN "
+                     "(SELECT offer_id FROM matches)", (now,))
+    return gone
 
 
 def drop_matches(conn, user_id, offer_ids):

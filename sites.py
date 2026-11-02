@@ -75,6 +75,7 @@ def _justjoin_offer(portal, offer):
         "skills": offer.get("requiredSkills"),
         "nice": offer.get("niceToHaveSkills"),
         "posted": portals.epoch(offer.get("publishedAt")),
+        "expires": offer.get("expiredAt"),
         "points": [[p["latitude"], p["longitude"]] for p in places
                    if isinstance(p.get("latitude"), (int, float)) and
                    isinstance(p.get("longitude"), (int, float))],
